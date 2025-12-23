@@ -125,6 +125,29 @@ class SupabaseClient:
 
         raise SupabaseError(f"Supabase request failed after retries: {method} {url} err={last_err}")
 
+    def upsert(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        *,
+        on_conflict: Optional[str] = None,
+    ) -> int:
+        if not rows:
+            return 0
+        params: dict[str, Any] = {}
+        if on_conflict:
+            params["on_conflict"] = on_conflict
+        resp = self._request(
+            "POST",
+            f"/rest/v1/{table}",
+            params=params,
+            headers=self._headers(prefer="resolution=merge-duplicates,return=minimal", content_type_json=True),
+            json_body=rows,
+        )
+        if not (200 <= resp.status_code < 300):
+            raise SupabaseError(f"Upsert failed table={table} status={resp.status_code} body={resp.text[:500]}")
+        return len(rows)
+
     def select(
         self,
         table: str,
