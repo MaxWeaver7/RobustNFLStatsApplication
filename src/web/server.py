@@ -502,7 +502,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/players":
-            limit = int(qs.get("limit", ["100"])[0])
+            # Default high to avoid hiding valid players when the UI requests "all skill players with stats".
+            limit = int(qs.get("limit", ["12000"])[0])
             if sb is not None:
                 players = queries_supabase.get_players_list(
                     sb,
@@ -677,7 +678,14 @@ class Handler(BaseHTTPRequestHandler):
                 if season is None or week is None:
                     self._json({"error": "missing season or week"}, code=400)
                     return
-                rows = queries_supabase.receiving_dashboard(sb, season=season, week=week, team=q_str("team"), limit=limit)
+                rows = queries_supabase.receiving_dashboard(
+                    sb,
+                    season=season,
+                    week=week,
+                    team=q_str("team"),
+                    position=q_str("position"),
+                    limit=limit,
+                )
                 self._json({"rows": rows})
             else:
                 with self._conn() as conn:
@@ -703,7 +711,14 @@ class Handler(BaseHTTPRequestHandler):
                 if season is None or week is None:
                     self._json({"error": "missing season or week"}, code=400)
                     return
-                rows = queries_supabase.rushing_dashboard(sb, season=season, week=week, team=q_str("team"), limit=limit)
+                rows = queries_supabase.rushing_dashboard(
+                    sb,
+                    season=season,
+                    week=week,
+                    team=q_str("team"),
+                    position=q_str("position"),
+                    limit=limit,
+                )
                 self._json({"rows": rows})
             else:
                 with self._conn() as conn:
@@ -718,6 +733,27 @@ class Handler(BaseHTTPRequestHandler):
                     r["photoUrl"] = queries.player_photo_url(r.get("player_id", ""))  # type: ignore[arg-type]
                     r["position"] = r.get("position") if r.get("position") not in (None, "", "UNK") else "RB"
                 self._json({"rows": rows})
+            return
+
+        if path == "/api/passing_dashboard":
+            limit = int(qs.get("limit", ["25"])[0])
+            if sb is not None:
+                season = q_int("season")
+                week = q_int("week")
+                if season is None or week is None:
+                    self._json({"error": "missing season or week"}, code=400)
+                    return
+                rows = queries_supabase.passing_dashboard(
+                    sb,
+                    season=season,
+                    week=week,
+                    team=q_str("team"),
+                    position=q_str("position"),
+                    limit=limit,
+                )
+                self._json({"rows": rows})
+            else:
+                self._json({"error": "passing_dashboard not supported without Supabase"}, code=501)
             return
 
         if path == "/api/receiving_season":
@@ -750,7 +786,13 @@ class Handler(BaseHTTPRequestHandler):
                 if season is None:
                     self._json({"error": "missing season"}, code=400)
                     return
-                rows = queries_supabase.rushing_season(sb, season=season, team=q_str("team"), limit=limit)
+                rows = queries_supabase.rushing_season(
+                    sb,
+                    season=season,
+                    team=q_str("team"),
+                    position=q_str("position"),
+                    limit=limit,
+                )
                 self._json({"rows": rows})
             else:
                 with self._conn() as conn:
@@ -764,6 +806,65 @@ class Handler(BaseHTTPRequestHandler):
                     r["photoUrl"] = queries.player_photo_url(r.get("player_id", ""))  # type: ignore[arg-type]
                     r["position"] = r.get("position") if r.get("position") not in (None, "", "UNK") else "RB"
                 self._json({"rows": rows})
+            return
+
+        if path == "/api/passing_season":
+            limit = int(qs.get("limit", ["25"])[0])
+            if sb is not None:
+                season = q_int("season")
+                if season is None:
+                    self._json({"error": "missing season"}, code=400)
+                    return
+                rows = queries_supabase.passing_season(
+                    sb,
+                    season=season,
+                    team=q_str("team"),
+                    position=q_str("position"),
+                    limit=limit,
+                )
+                self._json({"rows": rows})
+            else:
+                self._json({"error": "passing_season not supported without Supabase"}, code=501)
+            return
+
+        if path == "/api/total_yards_dashboard":
+            limit = int(qs.get("limit", ["25"])[0])
+            if sb is not None:
+                season = q_int("season")
+                week = q_int("week")
+                if season is None or week is None:
+                    self._json({"error": "missing season or week"}, code=400)
+                    return
+                rows = queries_supabase.total_yards_dashboard(
+                    sb,
+                    season=season,
+                    week=week,
+                    team=q_str("team"),
+                    position=q_str("position"),
+                    limit=limit,
+                )
+                self._json({"rows": rows})
+            else:
+                self._json({"error": "total_yards_dashboard not supported without Supabase"}, code=501)
+            return
+
+        if path == "/api/total_yards_season":
+            limit = int(qs.get("limit", ["25"])[0])
+            if sb is not None:
+                season = q_int("season")
+                if season is None:
+                    self._json({"error": "missing season"}, code=400)
+                    return
+                rows = queries_supabase.total_yards_season(
+                    sb,
+                    season=season,
+                    team=q_str("team"),
+                    position=q_str("position"),
+                    limit=limit,
+                )
+                self._json({"rows": rows})
+            else:
+                self._json({"error": "total_yards_season not supported without Supabase"}, code=501)
             return
 
         # Legacy endpoints for old UI

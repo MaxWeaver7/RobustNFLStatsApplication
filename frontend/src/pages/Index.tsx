@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { PlayerCard } from "@/components/PlayerCard";
@@ -7,14 +7,18 @@ import { AdvancedStatsTable } from "@/components/AdvancedStatsTable";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFilterOptions, usePlayers } from "@/hooks/useApi";
 import { Player, PlayerGameLog } from "@/types/player";
+import { useSearchParams } from "react-router-dom";
 
 const Index = () => {
   const { data: options } = useFilterOptions();
-  const [selectedSeason, setSelectedSeason] = useState<number>(options?.seasons[0] || 2024);
+  const [searchParams] = useSearchParams();
+  const DEFAULT_SEASON = 2025;
+  const [selectedSeason, setSelectedSeason] = useState<number>(options?.seasons?.[0] || DEFAULT_SEASON);
   const [selectedPosition, setSelectedPosition] = useState<string>('');
   const [selectedTeam, setSelectedTeam] = useState<string>('');
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [includePostseason, setIncludePostseason] = useState<boolean>(false);
+  const [search, setSearch] = useState<string>("");
 
   const { data: playersData, isLoading: playersLoading, refetch } = usePlayers(
     selectedSeason,
@@ -40,13 +44,48 @@ const Index = () => {
   });
 
   const players = useMemo(() => playersData?.players || [], [playersData]);
+  const filteredPlayers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return players;
+    return players.filter((p) => p.player_name.toLowerCase().includes(q));
+  }, [players, search]);
+
+  const visiblePlayers = filteredPlayers;
+
+  const requestedPlayerId = (searchParams.get("player_id") || "").trim();
+  const requestedSeason = Number(searchParams.get("season") || "");
+
+  // If coming from Leaderboards, honor ?season= and ?player_id=.
+  useEffect(() => {
+    if (!Number.isFinite(requestedSeason) || requestedSeason <= 0) return;
+    if (requestedSeason !== selectedSeason) setSelectedSeason(requestedSeason);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedSeason]);
+
+  // When options load (async), prefer the latest season unless user already chose something valid.
+  useEffect(() => {
+    const seasons = options?.seasons || [];
+    if (seasons.length === 0) return;
+    if (!seasons.includes(selectedSeason)) {
+      setSelectedSeason(seasons[0]);
+    }
+  }, [options?.seasons, selectedSeason]);
+
+  // After players load, select the requested player if present.
+  useEffect(() => {
+    if (!requestedPlayerId) return;
+    if (players.length === 0) return;
+    if (selectedPlayer?.player_id === requestedPlayerId) return;
+    const p = players.find((x) => x.player_id === requestedPlayerId);
+    if (p) setSelectedPlayer(p);
+  }, [players, requestedPlayerId, selectedPlayer?.player_id]);
 
   // Auto-select first player when list changes
-  useMemo(() => {
-    if (players.length > 0 && !selectedPlayer) {
-      setSelectedPlayer(players[0]);
+  useEffect(() => {
+    if (visiblePlayers.length > 0 && !selectedPlayer) {
+      setSelectedPlayer(visiblePlayers[0]);
     }
-  }, [players, selectedPlayer]);
+  }, [visiblePlayers, selectedPlayer]);
 
   const handleRefresh = () => {
     refetch();
@@ -133,22 +172,31 @@ const Index = () => {
             <div className="opacity-0 animate-fade-in">
               <h2 className="text-lg font-semibold text-foreground mb-1">Players</h2>
               <p className="text-sm text-muted-foreground mb-4">
-                {playersLoading ? 'Loading players...' : `${players.length} players found`}
+                {playersLoading ? 'Loading players...' : `${filteredPlayers.length} players found`}
               </p>
+              <div className="mt-3">
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search players…"
+                  className="w-full h-10 px-3 rounded-lg border border-border bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
             </div>
             
             <div className="space-y-3 max-h-[calc(100vh-300px)] overflow-y-auto pr-2">
-              {players.map((player, idx) => (
+              {visiblePlayers.map((player, idx) => (
                 <PlayerCard
                   key={player.player_id}
                   player={player}
                   isSelected={selectedPlayer?.player_id === player.player_id}
                   onClick={() => setSelectedPlayer(player)}
-                  delay={100 + idx * 50}
+                  // Avoid huge perceived slowness from staggered animations on large lists.
+                  delay={idx < 16 ? 60 + idx * 20 : 0}
                 />
               ))}
               
-              {!playersLoading && players.length === 0 && (
+              {!playersLoading && filteredPlayers.length === 0 && (
                 <div className="glass-card rounded-xl p-8 text-center">
                   <p className="text-muted-foreground">No players found for the selected filters.</p>
                 </div>

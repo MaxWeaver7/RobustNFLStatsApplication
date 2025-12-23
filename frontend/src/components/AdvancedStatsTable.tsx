@@ -9,6 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TeamLogo } from "./TeamLogo";
 
 interface AdvancedStatsTableProps {
   gameLogs: PlayerGameLog[];
@@ -113,18 +114,18 @@ export function AdvancedStatsTable({ gameLogs, position }: AdvancedStatsTablePro
                 <>
                   <SortHead k="passing_attempts" label="ATT" className="text-center" />
                   <SortHead k="passing_completions" label="COMP" className="text-center" />
-                  <SortHead k="passing_yards" label="YDS" className="text-center" />
-                  <SortHead k="passing_tds" label="TD" className="text-center" />
+                  <SortHead k="passing_yards" label="P YDS" className="text-center" />
+                  <SortHead k="passing_tds" label="P TD" className="text-center" />
                   <SortHead k="interceptions" label="INT" className="text-center" />
-                  <SortHead k="qb_rating" label="RATING" className="text-center bg-primary/10" />
+                  <SortHead k="rush_yards" label="RUSH YDS" className="text-center bg-primary/10" />
+                  <SortHead k="rush_tds" label="RUSH TD" className="text-center bg-primary/10" />
+                  <SortHead k="qb_rating" label="RATING" className="text-center bg-primary/5" />
                 </>
               ) : isReceiver ? (
                 <>
                   <SortHead k="targets" label="TGT" className="text-center" />
                   <SortHead k="receptions" label="REC" className="text-center" />
                   <SortHead k="rec_yards" label="YDS" className="text-center" />
-                  <SortHead k="air_yards" label="AIR YDS" className="text-center bg-primary/10" />
-                  <SortHead k="yac" label="YAC" className="text-center bg-primary/10" />
                   <SortHead k="rec_tds" label="TD" className="text-center" />
                 </>
               ) : (
@@ -155,7 +156,10 @@ export function AdvancedStatsTable({ gameLogs, position }: AdvancedStatsTablePro
                     {weekLabel(game)}
                   </TableCell>
                   <TableCell className="font-medium">
-                    {opponent}
+                    <div className="flex items-center gap-1.5">
+                      <TeamLogo team={game.opponent} size="sm" />
+                      <span>{opponent}</span>
+                    </div>
                   </TableCell>
                   {isQB ? (
                     <>
@@ -166,7 +170,9 @@ export function AdvancedStatsTable({ gameLogs, position }: AdvancedStatsTablePro
                       </TableCell>
                       <TableCell className="text-center font-mono">{game.passing_tds ?? 0}</TableCell>
                       <TableCell className="text-center font-mono">{game.interceptions ?? 0}</TableCell>
-                      <TableCell className="text-center font-mono bg-primary/5">
+                      <TableCell className="text-center font-mono bg-primary/5">{game.rush_yards ?? 0}</TableCell>
+                      <TableCell className="text-center font-mono bg-primary/5">{game.rush_tds ?? 0}</TableCell>
+                      <TableCell className="text-center font-mono bg-primary/[0.03]">
                         {typeof game.qb_rating === "number" ? game.qb_rating.toFixed(1) : "—"}
                       </TableCell>
                     </>
@@ -176,10 +182,6 @@ export function AdvancedStatsTable({ gameLogs, position }: AdvancedStatsTablePro
                       <TableCell className="text-center font-mono">{game.receptions}</TableCell>
                       <TableCell className={cn("text-center font-mono font-semibold", getStatHighlight(game.rec_yards, { high: 80, low: 30 }))}>
                         {game.rec_yards}
-                      </TableCell>
-                      <TableCell className="text-center font-mono bg-primary/5">{game.air_yards}</TableCell>
-                      <TableCell className={cn("text-center font-mono bg-primary/5", getStatHighlight(game.yac, { high: 20, low: 5 }))}>
-                        {game.yac}
                       </TableCell>
                       <TableCell className="text-center font-mono">{game.rec_tds}</TableCell>
                     </>

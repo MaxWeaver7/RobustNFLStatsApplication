@@ -23,6 +23,8 @@ export function usePlayers(season?: number, position?: string, team?: string) {
   if (season) params.set('season', season.toString());
   if (position) params.set('position', position);
   if (team) params.set('team', team);
+  // User requested returning thousands (avoid artificial caps that hide players).
+  params.set('limit', '12000');
   
   return useQuery({
     queryKey: ['players', season, position, team],

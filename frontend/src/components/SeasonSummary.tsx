@@ -1,6 +1,8 @@
 import { Player } from "@/types/player";
 import { StatCard } from "./StatCard";
 import { cn, getStatTrend } from "@/lib/utils";
+import { TeamLogo } from "./TeamLogo";
+import { useState } from "react";
 
 interface SeasonSummaryProps {
   player: Player;
@@ -11,37 +13,42 @@ export function SeasonSummary({ player }: SeasonSummaryProps) {
   const isReceiver = ['WR', 'TE'].includes(player.position || '');
   const isQB = (player.position || '').toUpperCase() === 'QB';
   const photoUrl = player.photoUrl;
+  const [imgError, setImgError] = useState(false);
+  const showImage = !!photoUrl && !imgError;
   
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4 opacity-0 animate-slide-up" style={{ animationDelay: '100ms' }}>
         <div className="w-20 h-20 rounded-2xl bg-secondary overflow-hidden ring-2 ring-border">
-          {photoUrl ? (
+          {showImage ? (
             <img
               src={photoUrl}
               alt={player.player_name}
               className="w-full h-full object-cover"
               loading="lazy"
               onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
+                setImgError(true);
               }}
             />
           ) : null}
           <div className={cn(
             "w-full h-full flex items-center justify-center text-muted-foreground text-2xl font-bold",
-            photoUrl && "hidden"
+            showImage && "hidden"
           )}>
             {player.player_name.split(' ').map(n => n[0]).join('')}
           </div>
         </div>
         <div>
           <h2 className="text-2xl font-bold text-foreground">{player.player_name}</h2>
-          <p className="text-muted-foreground">{player.team} • {player.position} • {stats.season || player.season} Season</p>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <TeamLogo team={player.team} size="md" />
+            <p>{player.team} • {player.position} • {stats.season || player.season} Season</p>
+          </div>
         </div>
       </div>
 
       {isQB ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <StatCard 
             label="Pass Yards" 
             value={stats.passingYards || 0} 
@@ -52,7 +59,7 @@ export function SeasonSummary({ player }: SeasonSummaryProps) {
           <StatCard 
             label="Pass TDs" 
             value={stats.passingTouchdowns || 0} 
-            subValue="Touchdowns"
+            subValue="Passing"
             trend={getStatTrend('touchdown', stats.passingTouchdowns || 0)}
             delay={200}
           />
@@ -64,10 +71,17 @@ export function SeasonSummary({ player }: SeasonSummaryProps) {
             delay={250}
           />
           <StatCard 
+            label="Rush TDs" 
+            value={stats.rushingTouchdowns || 0} 
+            subValue="Rushing"
+            trend={getStatTrend('touchdown', stats.rushingTouchdowns || 0)}
+            delay={300}
+          />
+          <StatCard 
             label="INT" 
             value={stats.passingInterceptions || 0} 
             subValue={`${typeof stats.qbRating === "number" ? stats.qbRating.toFixed(1) : "—"} rating`}
-            delay={300}
+            delay={350}
           />
         </div>
       ) : isReceiver ? (

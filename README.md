@@ -24,8 +24,14 @@ Open Supabase Dashboard → SQL Editor, and run:
 - `supabase/schema_core.sql`
 - `supabase/schema_stats.sql`
 
+Optional (recommended for speed if Players/Leaderboards feel slow):
+- `supabase/add_perf_indexes.sql`
+
 If you ran an older schema that created a strict unique index on games, run once:
 - `supabase/drop_uq_nfl_games_season_week_teams.sql`
+
+### AI handoff / project context
+- `docs/AI_HANDOFF.md`
 
 2) **Set env vars** in `.env`:
 - `SUPABASE_URL`

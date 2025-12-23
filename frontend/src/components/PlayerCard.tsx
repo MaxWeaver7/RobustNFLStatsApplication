@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Player } from "@/types/player";
 import { cn } from "@/lib/utils";
 import { ChevronRight } from "lucide-react";
+import { TeamLogo } from "./TeamLogo";
 
 interface PlayerCardProps {
   player: Player;
@@ -20,6 +22,8 @@ export function PlayerCard({ player, isSelected, onClick, delay = 0 }: PlayerCar
       : (seasonTotals.rushingYards || 0);
   const primaryLabel = isQB ? 'PASS YDS' : (isReceiver ? 'REC YDS' : 'RUSH YDS');
   const photoUrl = player.photoUrl;
+  const [imgError, setImgError] = useState(false);
+  const showImage = !!photoUrl && !imgError;
   
   return (
     <div
@@ -34,21 +38,20 @@ export function PlayerCard({ player, isSelected, onClick, delay = 0 }: PlayerCar
       <div className="flex items-center gap-4">
         <div className="relative">
           <div className="w-14 h-14 rounded-full bg-secondary overflow-hidden ring-2 ring-border">
-            {photoUrl ? (
+            {showImage ? (
               <img
                 src={photoUrl}
                 alt={player.player_name}
                 className="w-full h-full object-cover"
                 loading="lazy"
                 onError={(e) => {
-                  // Hide broken image, fall back to initials
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                  setImgError(true);
                 }}
               />
             ) : null}
             <div className={cn(
               "w-full h-full flex items-center justify-center text-muted-foreground text-lg font-bold",
-              photoUrl && "hidden"
+              showImage && "hidden"
             )}>
               {player.player_name.split(' ').map(n => n[0]).join('')}
             </div>
@@ -60,7 +63,10 @@ export function PlayerCard({ player, isSelected, onClick, delay = 0 }: PlayerCar
 
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-foreground truncate">{player.player_name}</h3>
-          <p className="text-sm text-muted-foreground">{player.team}</p>
+          <div className="flex items-center gap-1.5">
+            <TeamLogo team={player.team} size="sm" />
+            <p className="text-sm text-muted-foreground">{player.team}</p>
+          </div>
         </div>
 
         <div className="text-right mr-2">
@@ -76,22 +82,20 @@ export function PlayerCard({ player, isSelected, onClick, delay = 0 }: PlayerCar
       {isQB ? (
         <div className="grid grid-cols-4 gap-2 mt-4 pt-4 border-t border-border">
           <div className="text-center">
-            <p className="text-lg font-mono font-semibold">{seasonTotals.passingAttempts || 0}</p>
-            <p className="text-xs text-muted-foreground">ATT</p>
+            <p className="text-lg font-mono font-semibold text-primary">{seasonTotals.passingYards || 0}</p>
+            <p className="text-xs text-muted-foreground">PASS YDS</p>
           </div>
           <div className="text-center">
-            <p className="text-lg font-mono font-semibold text-primary">{seasonTotals.passingYards || 0}</p>
-            <p className="text-xs text-muted-foreground">YDS</p>
+            <p className="text-lg font-mono font-semibold">{seasonTotals.passingTouchdowns || 0}</p>
+            <p className="text-xs text-muted-foreground">PASS TD</p>
           </div>
           <div className="text-center">
             <p className="text-lg font-mono font-semibold">{seasonTotals.rushingYards || 0}</p>
             <p className="text-xs text-muted-foreground">RUSH YDS</p>
           </div>
           <div className="text-center">
-            <p className="text-lg font-mono font-semibold">
-              {(seasonTotals.passingTouchdowns || 0) + (seasonTotals.rushingTouchdowns || 0)}
-            </p>
-            <p className="text-xs text-muted-foreground">TOTAL TD</p>
+            <p className="text-lg font-mono font-semibold">{seasonTotals.rushingTouchdowns || 0}</p>
+            <p className="text-xs text-muted-foreground">RUSH TD</p>
           </div>
         </div>
       ) : isReceiver ? (

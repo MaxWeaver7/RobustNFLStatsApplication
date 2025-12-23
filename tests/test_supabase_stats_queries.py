@@ -21,16 +21,24 @@ class SBStub:
 def test_players_list_filters_to_players_with_stats():
     sb = SBStub(
         {
-            ("nfl_player_season_stats", "*", (("postseason", "eq.false"), ("season", "eq.2024")), None, None, 0): [
+            # get_players_list now uses a single embedded select from nfl_player_season_stats
+            (
+                "nfl_player_season_stats",
+                "*",
+                (
+                    ("or", "(passing_yards.gt.0,passing_attempts.gt.0,passing_touchdowns.gt.0,rushing_yards.gt.0,rushing_attempts.gt.0,rushing_touchdowns.gt.0,receiving_yards.gt.0,receptions.gt.0,receiving_touchdowns.gt.0,receiving_targets.gt.0)"),
+                    ("postseason", "eq.false"),
+                    ("season", "eq.2024"),
+                ),
+                None,
+                None,
+                0,
+            ): [
                 # no stats -> filtered out
-                {"player_id": 1, "games_played": 17, "receiving_targets": 0, "receptions": 0, "rushing_attempts": 0},
+                {"player_id": 1, "games_played": 17, "receiving_targets": 0, "receptions": 0, "rushing_attempts": 0, "nfl_players": {"first_name": "X", "last_name": "Y", "position_abbreviation": "WR", "team_id": 10, "nfl_teams": {"abbreviation": "ATL"}}},
                 # has stats -> included
-                {"player_id": 2, "games_played": 16, "receiving_targets": 100, "receptions": 80, "receiving_yards": 900, "receiving_touchdowns": 6},
+                {"player_id": 2, "games_played": 16, "receiving_targets": 100, "receptions": 80, "receiving_yards": 900, "receiving_touchdowns": 6, "nfl_players": {"first_name": "A", "last_name": "B", "position_abbreviation": "WR", "team_id": 10, "nfl_teams": {"abbreviation": "ATL"}}},
             ],
-            ("nfl_players", "*", (("id", "in.(2)"),), None, None, 0): [
-                {"id": 2, "first_name": "A", "last_name": "B", "position_abbreviation": "WR", "team_id": 10},
-            ],
-            ("nfl_teams", "*", (("id", "in.(10)"),), None, None, 0): [{"id": 10, "abbreviation": "ATL"}],
         }
     )
     rows = queries_supabase.get_players_list(sb, season=2024, position=None, team=None, limit=100)
