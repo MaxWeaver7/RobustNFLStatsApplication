@@ -1,8 +1,10 @@
 import { Player } from "@/types/player";
 import { StatCard } from "./StatCard";
+import { StatSparkline } from "./charts/StatSparkline";
+import { CountUp } from "./common/CountUp";
 import { cn, formatStat, getStatTrend } from "@/lib/utils";
 import { TeamLogo } from "./TeamLogo";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 
 interface SeasonSummaryProps {
   player: Player;
@@ -12,6 +14,7 @@ export function SeasonSummary({ player }: SeasonSummaryProps) {
   const stats = player.seasonTotals || player;
   const isReceiver = ['WR', 'TE'].includes(player.position || '');
   const isQB = (player.position || '').toUpperCase() === 'QB';
+  const isRB = (player.position || '').toUpperCase() === 'RB';
   const photoUrl = player.photoUrl;
   const [imgError, setImgError] = useState(false);
   const showImage = !!photoUrl && !imgError;
@@ -22,8 +25,34 @@ export function SeasonSummary({ player }: SeasonSummaryProps) {
   const hw = [player.height, player.weight].filter(Boolean).join(" / ");
   if (hw) chips.push(hw);
   if (typeof player.age === "number") chips.push(`Age ${player.age}`);
-  if (player.experience) chips.push(`Exp ${player.experience}`);
+  if (player.experience) chips.push(player.experience);
   if (player.college) chips.push(player.college);
+
+  // Extract last 5 regular season games for sparklines
+  const last5Games = useMemo(() => {
+    if (!player.gameLogs) return { 
+      passing: { data: [], avg: 0 }, 
+      rushing: { data: [], avg: 0 }, 
+      receiving: { data: [], avg: 0 } 
+    };
+    
+    const regularSeasonGames = player.gameLogs
+      .filter(g => !g.is_postseason && g.week < 19)
+      .sort((a, b) => a.week - b.week)
+      .slice(-5);
+
+    const passingData = regularSeasonGames.map(g => g.passing_yards || 0);
+    const rushingData = regularSeasonGames.map(g => g.rush_yards || 0);
+    const receivingData = regularSeasonGames.map(g => g.rec_yards || 0);
+
+    const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
+    return {
+      passing: { data: passingData, avg: avg(passingData) },
+      rushing: { data: rushingData, avg: avg(rushingData) },
+      receiving: { data: receivingData, avg: avg(receivingData) },
+    };
+  }, [player.gameLogs]);
   
   return (
     <div className="space-y-4">
@@ -73,36 +102,35 @@ export function SeasonSummary({ player }: SeasonSummaryProps) {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <StatCard 
             label="Pass Yards" 
-            value={stats.passingYards || 0} 
+            value={<CountUp end={stats.passingYards || 0} />} 
             subValue={`${stats.games || 0} games`}
             trend={getStatTrend('passing yards', stats.passingYards || 0)}
             delay={150}
+            sparkline={<StatSparkline data={last5Games.passing.data} average={last5Games.passing.avg} />}
           />
           <StatCard 
             label="Pass TDs" 
-            value={stats.passingTouchdowns || 0} 
-            subValue="Passing"
+            value={<CountUp end={stats.passingTouchdowns || 0} />} 
             trend={getStatTrend('touchdown', stats.passingTouchdowns || 0)}
             delay={200}
           />
           <StatCard 
             label="Rush Yards" 
-            value={stats.rushingYards || 0} 
+            value={<CountUp end={stats.rushingYards || 0} />} 
             subValue={`${formatStat(stats.avgYardsPerRush || 0)} avg`}
             trend={getStatTrend('rushingYards', stats.rushingYards || 0)}
             delay={250}
+            sparkline={<StatSparkline data={last5Games.rushing.data} average={last5Games.rushing.avg} />}
           />
           <StatCard 
             label="Rush TDs" 
-            value={stats.rushingTouchdowns || 0} 
-            subValue="Rushing"
+            value={<CountUp end={stats.rushingTouchdowns || 0} />} 
             trend={getStatTrend('touchdown', stats.rushingTouchdowns || 0)}
             delay={300}
           />
           <StatCard 
             label="INT" 
-            value={stats.passingInterceptions || 0} 
-            subValue={`${formatStat(stats.qbRating)} rating`}
+            value={<CountUp end={stats.passingInterceptions || 0} />} 
             delay={350}
           />
         </div>
@@ -110,27 +138,27 @@ export function SeasonSummary({ player }: SeasonSummaryProps) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard 
             label="Receptions" 
-            value={stats.receptions || 0} 
+            value={<CountUp end={stats.receptions || 0} />} 
             subValue={`${stats.games || 0} games`}
             delay={150}
           />
           <StatCard 
             label="Rec Yards" 
-            value={stats.receivingYards || 0} 
+            value={<CountUp end={stats.receivingYards || 0} />} 
             subValue={`${formatStat(stats.avgYardsPerCatch || 0)} avg`}
             trend={getStatTrend('receivingYards', stats.receivingYards || 0)}
             delay={200}
+            sparkline={<StatSparkline data={last5Games.receiving.data} average={last5Games.receiving.avg} />}
           />
           <StatCard 
             label="Targets" 
-            value={stats.targets || 0} 
+            value={<CountUp end={stats.targets || 0} />} 
             subValue={`${formatStat((stats.targets || 0) / (stats.games || 1))} per game`}
             delay={250}
           />
           <StatCard 
             label="Rec TDs" 
-            value={stats.receivingTouchdowns || 0} 
-            subValue="Touchdowns"
+            value={<CountUp end={stats.receivingTouchdowns || 0} />} 
             trend={getStatTrend('touchdown', stats.receivingTouchdowns || 0)}
             delay={300}
           />
@@ -139,29 +167,30 @@ export function SeasonSummary({ player }: SeasonSummaryProps) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard 
             label="Rush Attempts" 
-            value={stats.rushAttempts || 0} 
+            value={<CountUp end={stats.rushAttempts || 0} />} 
             subValue={`${stats.games || 0} games`}
             delay={150}
           />
           <StatCard 
             label="Rush Yards" 
-            value={stats.rushingYards || 0} 
+            value={<CountUp end={stats.rushingYards || 0} />} 
             subValue={`${formatStat(stats.avgYardsPerRush || 0)} avg`}
             trend={getStatTrend('rushingYards', stats.rushingYards || 0)}
             delay={200}
+            sparkline={<StatSparkline data={last5Games.rushing.data} average={last5Games.rushing.avg} />}
           />
           <StatCard 
             label="Rush TDs" 
-            value={stats.rushingTouchdowns || 0} 
-            subValue="Touchdowns"
+            value={<CountUp end={stats.rushingTouchdowns || 0} />} 
             trend={getStatTrend('touchdown', stats.rushingTouchdowns || 0)}
             delay={250}
           />
           <StatCard 
             label="Receptions" 
-            value={stats.receptions || 0} 
+            value={<CountUp end={stats.receptions || 0} />} 
             subValue={`${stats.receivingYards || 0} rec yards`}
             delay={300}
+            sparkline={isRB ? <StatSparkline data={last5Games.receiving.data} average={last5Games.receiving.avg} /> : undefined}
           />
         </div>
       )}

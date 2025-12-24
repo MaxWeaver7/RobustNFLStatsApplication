@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Header } from "@/components/Header";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AnimatedSelect } from "@/components/common/AnimatedSelect";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useFilterOptions } from "@/hooks/useApi";
 import { TeamLogo } from "@/components/TeamLogo";
@@ -164,66 +164,59 @@ export default function Leaderboards() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 w-full md:w-auto">
-              <Select value={mode} onValueChange={(v) => setMode(v as Mode)}>
-                <SelectTrigger><SelectValue placeholder="Mode" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="season">Season</SelectItem>
-                </SelectContent>
-              </Select>
+              <AnimatedSelect
+                label="Mode"
+                options={["Weekly", "Season"]}
+                value={mode === "weekly" ? "Weekly" : "Season"}
+                onChange={(v) => setMode(v === "Weekly" ? "weekly" : "season")}
+              />
 
-              <Select value={category} onValueChange={(v) => setCategory(v as Category)}>
-                <SelectTrigger><SelectValue placeholder="Category" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="receiving">Receiving</SelectItem>
-                  <SelectItem value="rushing">Rushing</SelectItem>
-                  <SelectItem value="passing">Passing</SelectItem>
-                  <SelectItem value="total_yards">Total Yards</SelectItem>
-                </SelectContent>
-              </Select>
+              <AnimatedSelect
+                label="Category"
+                options={["Receiving", "Rushing", "Passing", "Total Yards"]}
+                value={category === "receiving" ? "Receiving" : category === "rushing" ? "Rushing" : category === "passing" ? "Passing" : "Total Yards"}
+                onChange={(v) => {
+                  const map: Record<string, Category> = {
+                    "Receiving": "receiving",
+                    "Rushing": "rushing",
+                    "Passing": "passing",
+                    "Total Yards": "total_yards"
+                  };
+                  setCategory(map[v]);
+                }}
+              />
 
-              <Select value={String(season)} onValueChange={(v) => setSeason(Number(v))}>
-                <SelectTrigger><SelectValue placeholder="Season" /></SelectTrigger>
-                <SelectContent>
-                  {options?.seasons?.map((s) => (
-                    <SelectItem key={s} value={String(s)}>{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AnimatedSelect
+                label="Season"
+                options={(options?.seasons || []).map(s => String(s))}
+                value={String(season)}
+                onChange={(v) => setSeason(Number(v))}
+              />
 
               {mode === "weekly" ? (
-                <Select value={String(week)} onValueChange={(v) => setWeek(Number(v))}>
-                  <SelectTrigger><SelectValue placeholder="Week" /></SelectTrigger>
-                  <SelectContent>
-                    {options?.weeks?.map((w) => (
-                      <SelectItem key={w} value={String(w)}>Week {w}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <AnimatedSelect
+                  label="Week"
+                  options={(options?.weeks || []).map(w => `Week ${w}`)}
+                  value={`Week ${week}`}
+                  onChange={(v) => setWeek(Number(v.replace("Week ", "")))}
+                />
               ) : (
                 <div className="hidden lg:block" />
               )}
 
-              <Select value={team || "ALL"} onValueChange={(v) => setTeam(v === "ALL" ? "" : v)}>
-                <SelectTrigger><SelectValue placeholder="Team" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">All Teams</SelectItem>
-                  {options?.teams?.map((t) => (
-                    <SelectItem key={t} value={t}>{t}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AnimatedSelect
+                label="Team"
+                options={["All Teams", ...(options?.teams || [])]}
+                value={team || "All Teams"}
+                onChange={(v) => setTeam(v === "All Teams" ? "" : v)}
+              />
 
-              <Select value={position} onValueChange={(v) => setPosition(v)}>
-                <SelectTrigger><SelectValue placeholder="Position" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">All Positions</SelectItem>
-                  <SelectItem value="QB">QB</SelectItem>
-                  <SelectItem value="RB">RB</SelectItem>
-                  <SelectItem value="WR">WR</SelectItem>
-                  <SelectItem value="TE">TE</SelectItem>
-                </SelectContent>
-              </Select>
+              <AnimatedSelect
+                label="Position"
+                options={["All Positions", "QB", "RB", "WR", "TE"]}
+                value={position === "ALL" ? "All Positions" : position}
+                onChange={(v) => setPosition(v === "All Positions" ? "ALL" : v)}
+              />
 
               <div className="lg:min-w-[240px]">
                 <input

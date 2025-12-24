@@ -3,8 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { PlayerCard } from "@/components/PlayerCard";
 import { SeasonSummary } from "@/components/SeasonSummary";
+import { PlayerDossierSkeleton } from "@/components/skeletons/PlayerDossierSkeleton";
 import { AdvancedStatsTable } from "@/components/AdvancedStatsTable";
 import { GoatAdvancedStats } from "@/components/GoatAdvancedStats";
+import { AnimatedSelect } from "@/components/common/AnimatedSelect";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFilterOptions, usePlayers } from "@/hooks/useApi";
 import { Player, PlayerGameLog } from "@/types/player";
@@ -45,7 +47,7 @@ const Index = () => {
     setSelectedPlayer(null);
   }, [selectedSeason, selectedPosition, selectedTeam, serverSearch]);
 
-  const { data: playersData, isLoading: playersLoading, isFetching: playersFetching, refetch } = usePlayers(
+  const { data: playersData, isLoading: playersLoading, isFetching: playersFetching } = usePlayers(
     selectedSeason,
     selectedPosition || undefined,
     selectedTeam || undefined,
@@ -136,10 +138,6 @@ const Index = () => {
     }
   }, [visiblePlayers, selectedPlayer, requestedPlayerId]);
 
-  const handleRefresh = () => {
-    refetch();
-  };
-
   const currentPlayer = playerDetail?.player || selectedPlayer;
   const gameLogs = playerDetail?.gameLogs || [];
   const goatAdvanced = (playerDetail as any)?.goatAdvanced || null;
@@ -147,54 +145,46 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header onRefresh={handleRefresh} isRefreshing={playersLoading} />
+      <Header />
       
       <main className="container mx-auto px-4 py-8">
         {/* Filters */}
-        <div className="glass-card rounded-xl p-4 mb-6 opacity-0 animate-slide-up">
+        <div className="glass-card rounded-xl p-4 mb-6 opacity-0 animate-slide-up relative z-[100]">
           <h3 className="font-medium text-foreground mb-3">Filters</h3>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="text-sm text-muted-foreground mb-2 block">Season</label>
-              <Select value={selectedSeason.toString()} onValueChange={(value: string) => setSelectedSeason(Number(value))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select season" />
-                </SelectTrigger>
-                <SelectContent>
-                  {options?.seasons.map(season => (
-                    <SelectItem key={season} value={season.toString()}>{season}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AnimatedSelect
+                label="Select season"
+                options={(options?.seasons || []).map(s => s.toString())}
+                value={selectedSeason.toString()}
+                onChange={(value) => setSelectedSeason(Number(value))}
+              />
             </div>
             <div>
               <label className="text-sm text-muted-foreground mb-2 block">Position</label>
-              <Select value={selectedPosition || "ALL"} onValueChange={(val) => setSelectedPosition(val === "ALL" ? "" : val)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Positions" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">All Positions</SelectItem>
-                  <SelectItem value="WR">WR - Wide Receiver</SelectItem>
-                  <SelectItem value="RB">RB - Running Back</SelectItem>
-                  <SelectItem value="TE">TE - Tight End</SelectItem>
-                  <SelectItem value="QB">QB - Quarterback</SelectItem>
-                </SelectContent>
-              </Select>
+              <AnimatedSelect
+                label="All Positions"
+                options={["All Positions", "QB - Quarterback", "RB - Running Back", "WR - Wide Receiver", "TE - Tight End"]}
+                value={selectedPosition ? `${selectedPosition} - ${selectedPosition === 'QB' ? 'Quarterback' : selectedPosition === 'RB' ? 'Running Back' : selectedPosition === 'WR' ? 'Wide Receiver' : 'Tight End'}` : "All Positions"}
+                onChange={(val) => {
+                  if (val === "All Positions") {
+                    setSelectedPosition("");
+                  } else {
+                    const pos = val.split(" - ")[0];
+                    setSelectedPosition(pos);
+                  }
+                }}
+              />
             </div>
             <div>
               <label className="text-sm text-muted-foreground mb-2 block">Team</label>
-              <Select value={selectedTeam || "ALL"} onValueChange={(val) => setSelectedTeam(val === "ALL" ? "" : val)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Teams" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">All Teams</SelectItem>
-                  {options?.teams.map(team => (
-                    <SelectItem key={team} value={team}>{team}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AnimatedSelect
+                label="All Teams"
+                options={["All Teams", ...(options?.teams || [])]}
+                value={selectedTeam || "All Teams"}
+                onChange={(val) => setSelectedTeam(val === "All Teams" ? "" : val)}
+              />
             </div>
             <div>
               <label className="text-sm text-muted-foreground mb-2 block">Season Type</label>
@@ -210,36 +200,18 @@ const Index = () => {
                   {includePostseason ? "ON" : "OFF"}
                 </span>
               </button>
-              <p className="text-xs text-muted-foreground mt-2">
-                Postseason shows as weeks 19–22 (WC/DIV/CONF/SB).
-              </p>
             </div>
           </div>
         </div>
 
-        {currentPlayer ? (
-          <div className="mb-4">
-            <button
-              type="button"
-              className="h-10 px-4 rounded-lg border border-border bg-transparent text-sm text-foreground hover:bg-secondary transition-colors"
-              onClick={() => {
-                const el = document.getElementById("player-dossier");
-                el?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-            >
-              Jump to Dossier
-            </button>
-          </div>
-        ) : null}
-
-        <div className="grid lg:grid-cols-12 gap-8">
+        <div className="grid lg:grid-cols-12 gap-8 relative z-0">
           {/* Player List Sidebar */}
           <div className="lg:col-span-4 space-y-4">
             <div className="opacity-0 animate-fade-in">
               <h2 className="text-lg font-semibold text-foreground mb-1">Players</h2>
               <p className="text-sm text-muted-foreground mb-4">
-                {playersLoading ? 'Loading players...' : `${visiblePlayers.length} players found`}
-                {!playersLoading && playersFetching ? " • updating…" : ""}
+                {playersLoading ? 'Loading players...' : ''}
+                {!playersLoading && playersFetching ? "Updating…" : ""}
               </p>
               <div className="mt-3">
                 <input
@@ -296,7 +268,11 @@ const Index = () => {
                     borderLeftColor: accent || "transparent",
                   }}
                 >
-                  <SeasonSummary player={currentPlayer} />
+                  {detailLoading ? (
+                    <PlayerDossierSkeleton position={currentPlayer.position || undefined} />
+                  ) : (
+                    <SeasonSummary player={{ ...currentPlayer, gameLogs }} />
+                  )}
 
                   {/* Accordion Reveal */}
                   <DossierReveal

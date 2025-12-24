@@ -1,16 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Database, RefreshCw, Settings } from "lucide-react";
+import { Database, Settings } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/context/theme";
 
-interface HeaderProps {
-  onRefresh?: () => void;
-  isRefreshing?: boolean;
-}
-
-export function Header({ onRefresh, isRefreshing }: HeaderProps) {
+export function Header() {
   const { theme, toggleTheme } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -27,15 +22,15 @@ export function Header({ onRefresh, isRefreshing }: HeaderProps) {
     <header className="border-b border-border bg-card/50 backdrop-blur-xl sticky top-0 z-50">
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
+          <NavLink to="/" className="flex items-center gap-3 group">
+          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center group-hover:bg-primary/30 transition-colors">
             <Database className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-foreground">Fantasy Analytics</h1>
+            <h1 className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">Fantasy Analytics</h1>
             <p className="text-xs text-muted-foreground">Advanced NFL Metrics</p>
           </div>
-          </div>
+          </NavLink>
 
           <nav className="hidden md:flex items-center gap-2">
             <NavLink
@@ -64,16 +59,6 @@ export function Header({ onRefresh, isRefreshing }: HeaderProps) {
         </div>
 
         <div className="flex items-center gap-3">
-          <Button 
-            variant="glow" 
-            size="sm" 
-            onClick={onRefresh}
-            disabled={isRefreshing}
-            className="gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            {isRefreshing ? 'Refreshing...' : 'Refresh Data'}
-          </Button>
           <div className="relative">
             <Button
               variant="ghost"
