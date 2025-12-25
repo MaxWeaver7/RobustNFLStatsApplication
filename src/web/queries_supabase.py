@@ -1245,3 +1245,286 @@ def total_yards_season(
     return out[: min(max(limit, 1), 200)]
 
 
+def advanced_passing_leaderboard(
+    sb: SupabaseClient,
+    *,
+    season: int,
+    sort_by: str = "avg_air_distance",
+    position: Optional[str] = None,
+    team_abbr: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """
+    Advanced Passing Leaderboard (Season Totals from GOAT API)
+    Queries week=0 rows from nfl_advanced_passing_stats table.
+    """
+    filters: dict[str, Any] = {
+        "season": f"eq.{int(season)}",
+        "week": "eq.0",  # Season totals only
+        "postseason": "eq.false",
+        "attempts": "gte.50",  # Minimum volume threshold
+    }
+
+    # Build player select with embedded team info
+    select_parts = [
+        "player_id",
+        "season",
+        "attempts",
+        "completions",
+        "pass_yards",
+        "pass_touchdowns",
+        "interceptions",
+        "passer_rating",
+        "completion_percentage",
+        "completion_percentage_above_expectation",
+        "expected_completion_percentage",
+        "avg_time_to_throw",
+        "avg_intended_air_yards",
+        "avg_completed_air_yards",
+        "avg_air_distance",
+        "avg_air_yards_differential",
+        "avg_air_yards_to_sticks",
+        "max_air_distance",
+        "max_completed_air_distance",
+        "aggressiveness",
+        "games_played",
+        "nfl_players!inner(id,first_name,last_name,position_abbreviation,team_id,nfl_teams(abbreviation))",
+    ]
+    select_clause = ",".join(select_parts)
+
+    rows = sb.select(
+        "nfl_advanced_passing_stats",
+        select=select_clause,
+        filters=filters,
+        order=f"{sort_by}.desc.nullslast",
+        limit=limit,
+    )
+
+    # Flatten player info for easier frontend consumption
+    out = []
+    for r in rows:
+        player = r.get("nfl_players") or {}
+        team_data = player.get("nfl_teams") or {}
+        
+        # Apply position filter (Python-side)
+        if position:
+            player_pos = (player.get("position_abbreviation") or "").upper()
+            if player_pos != position.upper():
+                continue
+        
+        # Apply team filter (Python-side)
+        if team_abbr:
+            team_abbr_actual = (team_data.get("abbreviation") or "").upper()
+            if team_abbr_actual != team_abbr.upper():
+                continue
+        
+        player_name = f"{player.get('first_name', '')} {player.get('last_name', '')}".strip()
+        out.append({
+            "player_id": r.get("player_id"),
+            "player_name": player_name,
+            "position": player.get("position_abbreviation") or "QB",
+            "team": team_data.get("abbreviation"),
+            "season": r.get("season"),
+            "attempts": r.get("attempts"),
+            "completions": r.get("completions"),
+            "pass_yards": r.get("pass_yards"),
+            "pass_touchdowns": r.get("pass_touchdowns"),
+            "interceptions": r.get("interceptions"),
+            "passer_rating": r.get("passer_rating"),
+            "completion_percentage": r.get("completion_percentage"),
+            "completion_percentage_above_expectation": r.get("completion_percentage_above_expectation"),
+            "expected_completion_percentage": r.get("expected_completion_percentage"),
+            "avg_time_to_throw": r.get("avg_time_to_throw"),
+            "avg_intended_air_yards": r.get("avg_intended_air_yards"),
+            "avg_completed_air_yards": r.get("avg_completed_air_yards"),
+            "avg_air_distance": r.get("avg_air_distance"),
+            "avg_air_yards_differential": r.get("avg_air_yards_differential"),
+            "avg_air_yards_to_sticks": r.get("avg_air_yards_to_sticks"),
+            "max_air_distance": r.get("max_air_distance"),
+            "max_completed_air_distance": r.get("max_completed_air_distance"),
+            "aggressiveness": r.get("aggressiveness"),
+            "games_played": r.get("games_played"),
+            "photoUrl": player_photo_url_from_name_team(name=player_name, team=team_data.get("abbreviation") or ""),
+        })
+    
+    return out
+
+
+def advanced_rushing_leaderboard(
+    sb: SupabaseClient,
+    *,
+    season: int,
+    sort_by: str = "rush_yards_over_expected",
+    position: Optional[str] = None,
+    team_abbr: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """
+    Advanced Rushing Leaderboard (Season Totals from GOAT API)
+    Queries week=0 rows from nfl_advanced_rushing_stats table.
+    """
+    filters: dict[str, Any] = {
+        "season": f"eq.{int(season)}",
+        "week": "eq.0",  # Season totals only
+        "postseason": "eq.false",
+        "rush_attempts": "gte.20",  # Minimum volume threshold
+    }
+
+    select_parts = [
+        "player_id",
+        "season",
+        "rush_attempts",
+        "rush_yards",
+        "rush_touchdowns",
+        "efficiency",
+        "avg_rush_yards",
+        "avg_time_to_los",
+        "expected_rush_yards",
+        "rush_yards_over_expected",
+        "rush_yards_over_expected_per_att",
+        "rush_pct_over_expected",
+        "percent_attempts_gte_eight_defenders",
+        "nfl_players!inner(id,first_name,last_name,position_abbreviation,team_id,nfl_teams(abbreviation))",
+    ]
+    select_clause = ",".join(select_parts)
+
+    rows = sb.select(
+        "nfl_advanced_rushing_stats",
+        select=select_clause,
+        filters=filters,
+        order=f"{sort_by}.desc.nullslast",
+        limit=limit,
+    )
+
+    # Flatten player info
+    out = []
+    for r in rows:
+        player = r.get("nfl_players") or {}
+        team_data = player.get("nfl_teams") or {}
+        
+        # Apply position filter (Python-side)
+        if position:
+            player_pos = (player.get("position_abbreviation") or "").upper()
+            if player_pos != position.upper():
+                continue
+        
+        # Apply team filter (Python-side)
+        if team_abbr:
+            team_abbr_actual = (team_data.get("abbreviation") or "").upper()
+            if team_abbr_actual != team_abbr.upper():
+                continue
+        
+        player_name = f"{player.get('first_name', '')} {player.get('last_name', '')}".strip()
+        out.append({
+            "player_id": r.get("player_id"),
+            "player_name": player_name,
+            "position": player.get("position_abbreviation") or "RB",
+            "team": team_data.get("abbreviation"),
+            "season": r.get("season"),
+            "rush_attempts": r.get("rush_attempts"),
+            "rush_yards": r.get("rush_yards"),
+            "rush_touchdowns": r.get("rush_touchdowns"),
+            "efficiency": r.get("efficiency"),
+            "avg_rush_yards": r.get("avg_rush_yards"),
+            "avg_time_to_los": r.get("avg_time_to_los"),
+            "expected_rush_yards": r.get("expected_rush_yards"),
+            "rush_yards_over_expected": r.get("rush_yards_over_expected"),
+            "rush_yards_over_expected_per_att": r.get("rush_yards_over_expected_per_att"),
+            "rush_pct_over_expected": r.get("rush_pct_over_expected"),
+            "percent_attempts_gte_eight_defenders": r.get("percent_attempts_gte_eight_defenders"),
+            "photoUrl": player_photo_url_from_name_team(name=player_name, team=team_data.get("abbreviation") or ""),
+        })
+    
+    return out
+
+
+def advanced_receiving_leaderboard(
+    sb: SupabaseClient,
+    *,
+    season: int,
+    sort_by: str = "avg_yac_above_expectation",
+    position: Optional[str] = None,
+    team_abbr: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """
+    Advanced Receiving Leaderboard (Season Totals from GOAT API)
+    Queries week=0 rows from nfl_advanced_receiving_stats table.
+    """
+    filters: dict[str, Any] = {
+        "season": f"eq.{int(season)}",
+        "week": "eq.0",  # Season totals only
+        "postseason": "eq.false",
+        "targets": "gte.10",  # Minimum volume threshold
+    }
+
+    select_parts = [
+        "player_id",
+        "season",
+        "receptions",
+        "targets",
+        "yards",
+        "avg_intended_air_yards",
+        "avg_yac",
+        "avg_expected_yac",
+        "avg_yac_above_expectation",
+        "catch_percentage",
+        "avg_cushion",
+        "avg_separation",
+        "percent_share_of_intended_air_yards",
+        "rec_touchdowns",
+        "nfl_players!inner(id,first_name,last_name,position_abbreviation,team_id,nfl_teams(abbreviation))",
+    ]
+    select_clause = ",".join(select_parts)
+
+    rows = sb.select(
+        "nfl_advanced_receiving_stats",
+        select=select_clause,
+        filters=filters,
+        order=f"{sort_by}.desc.nullslast",
+        limit=limit,
+    )
+
+    # Flatten player info
+    out = []
+    for r in rows:
+        player = r.get("nfl_players") or {}
+        team_data = player.get("nfl_teams") or {}
+        
+        # Apply position filter (Python-side)
+        if position:
+            player_pos = (player.get("position_abbreviation") or "").upper()
+            if player_pos != position.upper():
+                continue
+        
+        # Apply team filter (Python-side)
+        if team_abbr:
+            team_abbr_actual = (team_data.get("abbreviation") or "").upper()
+            if team_abbr_actual != team_abbr.upper():
+                continue
+        
+        player_name = f"{player.get('first_name', '')} {player.get('last_name', '')}".strip()
+        out.append({
+            "player_id": r.get("player_id"),
+            "player_name": player_name,
+            "position": player.get("position_abbreviation") or "WR",
+            "team": team_data.get("abbreviation"),
+            "season": r.get("season"),
+            "receptions": r.get("receptions"),
+            "targets": r.get("targets"),
+            "yards": r.get("yards"),
+            "avg_intended_air_yards": r.get("avg_intended_air_yards"),
+            "avg_yac": r.get("avg_yac"),
+            "avg_expected_yac": r.get("avg_expected_yac"),
+            "avg_yac_above_expectation": r.get("avg_yac_above_expectation"),
+            "catch_percentage": r.get("catch_percentage"),
+            "avg_cushion": r.get("avg_cushion"),
+            "avg_separation": r.get("avg_separation"),
+            "percent_share_of_intended_air_yards": r.get("percent_share_of_intended_air_yards"),
+            "rec_touchdowns": r.get("rec_touchdowns"),
+            "photoUrl": player_photo_url_from_name_team(name=player_name, team=team_data.get("abbreviation") or ""),
+        })
+    
+    return out
+
+

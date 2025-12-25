@@ -6,9 +6,16 @@ import { useFilterOptions } from "@/hooks/useApi";
 import { TeamLogo } from "@/components/TeamLogo";
 import { useNavigate } from "react-router-dom";
 import { formatStat } from "@/lib/utils";
+import {
+  ADVANCED_STAT_TOOLTIPS,
+  ADVANCED_RECEIVING_COLUMNS,
+  ADVANCED_RUSHING_COLUMNS,
+  ADVANCED_PASSING_COLUMNS,
+} from "@/config/advanced-stats-config";
 
 type Mode = "weekly" | "season";
 type Category = "receiving" | "rushing" | "passing" | "total_yards";
+type StatsMode = "standard" | "advanced";
 
 type Row = Record<string, any>;
 
@@ -28,6 +35,7 @@ export default function Leaderboards() {
 
   const DEFAULT_SEASON = 2025;
   const [mode, setMode] = useState<Mode>("weekly");
+  const [statsMode, setStatsMode] = useState<StatsMode>("standard");
   const [category, setCategory] = useState<Category>("receiving");
   const [season, setSeason] = useState<number>(options?.seasons?.[0] || DEFAULT_SEASON);
   const [week, setWeek] = useState<number>(options?.weeks?.[0] || 1);
@@ -68,6 +76,21 @@ export default function Leaderboards() {
     const needle = search.trim();
     if (needle.length >= 2) base.set("q", needle);
 
+    // Advanced stats mode (season only)
+    if (statsMode === "advanced" && mode === "season") {
+      if (category === "receiving") {
+        return `/api/advanced/receiving/season?${base.toString()}`;
+      }
+      if (category === "rushing") {
+        return `/api/advanced/rushing/season?${base.toString()}`;
+      }
+      if (category === "passing") {
+        return `/api/advanced/passing/season?${base.toString()}`;
+      }
+      // total_yards not available in advanced mode - fall back to standard
+    }
+
+    // Standard stats mode
     if (category === "receiving") {
       return mode === "weekly"
         ? `/api/receiving_dashboard?${base.toString()}`
@@ -87,7 +110,7 @@ export default function Leaderboards() {
     return mode === "weekly"
       ? `/api/total_yards_dashboard?${base.toString()}`
       : `/api/total_yards_season?${base.toString()}`;
-  }, [mode, category, season, week, team, position, search]);
+  }, [mode, statsMode, category, season, week, team, position, search]);
 
   const [rows, setRows] = useState<Row[]>([]);
   // Start in "loading" to avoid flashing empty/no-results before the first request begins.
@@ -226,8 +249,39 @@ export default function Leaderboards() {
                 label="Mode"
                 options={["Weekly", "Season"]}
                 value={mode === "weekly" ? "Weekly" : "Season"}
-                onChange={(v) => setMode(v === "Weekly" ? "weekly" : "season")}
+                onChange={(v) => {
+                  const newMode = v === "Weekly" ? "weekly" : "season";
+                  setMode(newMode);
+                  // Reset to standard mode when switching to weekly (advanced only works for season)
+                  if (newMode === "weekly") setStatsMode("standard");
+                }}
               />
+
+              {/* Standard / Advanced Toggle (Season only) */}
+              {mode === "season" && category !== "total_yards" && (
+                <div className="col-span-full sm:col-span-2 flex items-center gap-1 p-1 bg-secondary/30 rounded-lg border border-border">
+                  {(["Standard", "Advanced"] as const).map((sm) => {
+                    const smValue: StatsMode = sm.toLowerCase() as StatsMode;
+                    const isActive = statsMode === smValue;
+                    return (
+                      <button
+                        key={sm}
+                        type="button"
+                        onClick={() => setStatsMode(smValue)}
+                        className={`
+                          flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-all
+                          ${isActive 
+                            ? "bg-primary text-primary-foreground shadow-sm" 
+                            : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                          }
+                        `}
+                      >
+                        {sm}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Category Segmented Control */}
               <div className="col-span-full sm:col-span-2 lg:col-span-4 flex items-center gap-1 p-1 bg-secondary/30 rounded-lg border border-border">
@@ -311,14 +365,28 @@ export default function Leaderboards() {
                 <TableRow className="border-border hover:bg-transparent">
                   <TableHead className="text-muted-foreground font-medium">Player</TableHead>
                   <TableHead className="text-muted-foreground font-medium">Team</TableHead>
-                  {category === "receiving" ? (
+                  {statsMode === "advanced" ? (
                     <>
-                      <SortHead k="targets" label="TGT" className="text-center" />
-                      <SortHead k="receptions" label="REC" className="text-center" />
-                      <SortHead k="rec_yards" label="YDS" className="text-center" />
-                      <SortHead k="rec_tds" label="TD" className="text-center" />
+                      {category === "receiving" && ADVANCED_RECEIVING_COLUMNS.map(col => (
+                        <SortHead key={col.k} k={col.k} label={col.label} className="text-center" />
+                      ))}
+                      {category === "rushing" && ADVANCED_RUSHING_COLUMNS.map(col => (
+                        <SortHead key={col.k} k={col.k} label={col.label} className="text-center" />
+                      ))}
+                      {category === "passing" && ADVANCED_PASSING_COLUMNS.map(col => (
+                        <SortHead key={col.k} k={col.k} label={col.label} className="text-center" />
+                      ))}
                     </>
-                  ) : category === "rushing" ? (
+                  ) : (
+                    <>
+                      {category === "receiving" ? (
+                        <>
+                          <SortHead k="targets" label="TGT" className="text-center" />
+                          <SortHead k="receptions" label="REC" className="text-center" />
+                          <SortHead k="rec_yards" label="YDS" className="text-center" />
+                          <SortHead k="rec_tds" label="TD" className="text-center" />
+                        </>
+                      ) : category === "rushing" ? (
                     <>
                       <SortHead k="rush_attempts" label="ATT" className="text-center" />
                       <SortHead k="rush_yards" label="YDS" className="text-center" />
@@ -338,12 +406,14 @@ export default function Leaderboards() {
                       <SortHead k="passing_tds" label="TD" className="text-center" />
                       <SortHead k="interceptions" label="INT" className="text-center" />
                     </>
-                  ) : (
-                    <>
-                      <SortHead k="rush_yards" label="RUSH" className="text-center" />
-                      <SortHead k="rec_yards" label="REC" className="text-center" />
-                      <SortHead k="total_yards" label="TOTAL" className="text-center" />
-                      <SortHead k="total_tds" label="TD" className="text-center" />
+                      ) : (
+                        <>
+                          <SortHead k="rush_yards" label="RUSH" className="text-center" />
+                          <SortHead k="rec_yards" label="REC" className="text-center" />
+                          <SortHead k="total_yards" label="TOTAL" className="text-center" />
+                          <SortHead k="total_tds" label="TD" className="text-center" />
+                        </>
+                      )}
                     </>
                   )}
                 </TableRow>
@@ -423,14 +493,34 @@ export default function Leaderboards() {
                           </div>
                         </TableCell>
 
-                        {category === "receiving" ? (
+                        {statsMode === "advanced" ? (
                           <>
-                            <TableCell className="text-center font-mono">{r.targets ?? 0}</TableCell>
-                            <TableCell className="text-center font-mono">{r.receptions ?? 0}</TableCell>
-                            <TableCell className="text-center font-mono font-semibold">{r.rec_yards ?? 0}</TableCell>
-                            <TableCell className="text-center font-mono">{r.rec_tds ?? 0}</TableCell>
+                            {category === "receiving" && ADVANCED_RECEIVING_COLUMNS.map(col => (
+                              <TableCell key={col.k} className="text-center font-mono">
+                                {formatStat(r[col.k] ?? 0, { integer: col.type === "int" })}
+                              </TableCell>
+                            ))}
+                            {category === "rushing" && ADVANCED_RUSHING_COLUMNS.map(col => (
+                              <TableCell key={col.k} className="text-center font-mono">
+                                {formatStat(r[col.k] ?? 0, { integer: col.type === "int" })}
+                              </TableCell>
+                            ))}
+                            {category === "passing" && ADVANCED_PASSING_COLUMNS.map(col => (
+                              <TableCell key={col.k} className="text-center font-mono">
+                                {formatStat(r[col.k] ?? 0, { integer: col.type === "int" })}
+                              </TableCell>
+                            ))}
                           </>
-                        ) : category === "rushing" ? (
+                        ) : (
+                          <>
+                            {category === "receiving" ? (
+                              <>
+                                <TableCell className="text-center font-mono">{r.targets ?? 0}</TableCell>
+                                <TableCell className="text-center font-mono">{r.receptions ?? 0}</TableCell>
+                                <TableCell className="text-center font-mono font-semibold">{r.rec_yards ?? 0}</TableCell>
+                                <TableCell className="text-center font-mono">{r.rec_tds ?? 0}</TableCell>
+                              </>
+                            ) : category === "rushing" ? (
                           <>
                             <TableCell className="text-center font-mono">{r.rush_attempts ?? 0}</TableCell>
                             <TableCell className="text-center font-mono font-semibold">{r.rush_yards ?? 0}</TableCell>
@@ -456,12 +546,14 @@ export default function Leaderboards() {
                             <TableCell className="text-center font-mono">{r.passing_tds ?? 0}</TableCell>
                             <TableCell className="text-center font-mono">{r.interceptions ?? 0}</TableCell>
                           </>
-                        ) : (
-                          <>
-                            <TableCell className="text-center font-mono">{r.rush_yards ?? 0}</TableCell>
-                            <TableCell className="text-center font-mono">{r.rec_yards ?? 0}</TableCell>
-                            <TableCell className="text-center font-mono font-semibold">{r.total_yards ?? 0}</TableCell>
-                            <TableCell className="text-center font-mono">{r.total_tds ?? 0}</TableCell>
+                            ) : (
+                              <>
+                                <TableCell className="text-center font-mono">{r.rush_yards ?? 0}</TableCell>
+                                <TableCell className="text-center font-mono">{r.rec_yards ?? 0}</TableCell>
+                                <TableCell className="text-center font-mono font-semibold">{r.total_yards ?? 0}</TableCell>
+                                <TableCell className="text-center font-mono">{r.total_tds ?? 0}</TableCell>
+                              </>
+                            )}
                           </>
                         )}
                         </TableRow>

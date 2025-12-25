@@ -949,6 +949,70 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "total_yards_season not supported without Supabase"}, code=501)
             return
 
+        # Advanced Stats Leaderboards (Season Only - from GOAT API)
+        if path == "/api/advanced/passing/season":
+            if sb is None:
+                self._json({"error": "Supabase not configured"}, code=503)
+                return
+            
+            season = q_int("season")
+            if season is None:
+                self._json({"error": "missing season"}, code=400)
+                return
+            
+            sort_by = qs.get("sort", ["avg_air_distance"])[0]
+            limit = int(qs.get("limit", ["200"])[0])
+            position = q_str("position")
+            team = q_str("team")
+            
+            rows = queries_supabase.advanced_passing_leaderboard(
+                sb, season=season, sort_by=sort_by, position=position, team_abbr=team, limit=limit
+            )
+            self._json({"rows": rows})
+            return
+
+        if path == "/api/advanced/rushing/season":
+            if sb is None:
+                self._json({"error": "Supabase not configured"}, code=503)
+                return
+            
+            season = q_int("season")
+            if season is None:
+                self._json({"error": "missing season"}, code=400)
+                return
+            
+            sort_by = qs.get("sort", ["rush_yards_over_expected"])[0]
+            limit = int(qs.get("limit", ["200"])[0])
+            position = q_str("position")
+            team = q_str("team")
+            
+            rows = queries_supabase.advanced_rushing_leaderboard(
+                sb, season=season, sort_by=sort_by, position=position, team_abbr=team, limit=limit
+            )
+            self._json({"rows": rows})
+            return
+
+        if path == "/api/advanced/receiving/season":
+            if sb is None:
+                self._json({"error": "Supabase not configured"}, code=503)
+                return
+            
+            season = q_int("season")
+            if season is None:
+                self._json({"error": "missing season"}, code=400)
+                return
+            
+            sort_by = qs.get("sort", ["avg_yac_above_expectation"])[0]
+            limit = int(qs.get("limit", ["200"])[0])
+            position = q_str("position")
+            team = q_str("team")
+            
+            rows = queries_supabase.advanced_receiving_leaderboard(
+                sb, season=season, sort_by=sort_by, position=position, team_abbr=team, limit=limit
+            )
+            self._json({"rows": rows})
+            return
+
         # Legacy endpoints for old UI
         if path.startswith("/player/"):
             player_id = path.split("/player/", 1)[1].strip()
