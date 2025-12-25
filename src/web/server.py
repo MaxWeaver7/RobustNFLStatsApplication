@@ -842,7 +842,7 @@ class Handler(BaseHTTPRequestHandler):
                 if season is None:
                     self._json({"error": "missing season"}, code=400)
                     return
-                rows = queries_supabase.receiving_season(sb, season=season, team=q_str("team"), limit=limit)
+                rows = queries_supabase.receiving_season(sb, season=season, team=q_str("team"), q=q_str("q"), limit=limit)
                 self._json({"rows": rows})
             else:
                 with self._conn() as conn:
@@ -870,6 +870,7 @@ class Handler(BaseHTTPRequestHandler):
                     season=season,
                     team=q_str("team"),
                     position=q_str("position"),
+                    q=q_str("q"),
                     limit=limit,
                 )
                 self._json({"rows": rows})
@@ -899,6 +900,7 @@ class Handler(BaseHTTPRequestHandler):
                     season=season,
                     team=q_str("team"),
                     position=q_str("position"),
+                    q=q_str("q"),
                     limit=limit,
                 )
                 self._json({"rows": rows})
@@ -939,6 +941,7 @@ class Handler(BaseHTTPRequestHandler):
                     season=season,
                     team=q_str("team"),
                     position=q_str("position"),
+                    q=q_str("q"),
                     limit=limit,
                 )
                 self._json({"rows": rows})

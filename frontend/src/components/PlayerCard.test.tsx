@@ -15,8 +15,8 @@ describe("PlayerCard team aura", () => {
     render(<PlayerCard player={player} />);
 
     const aura = screen.getByTestId("player-team-aura");
-    expect(aura).toHaveClass("blur-xl");
-    expect(aura).toHaveClass("opacity-30");
+    expect(aura).toHaveClass("blur-md");
+    expect(aura).toHaveClass("opacity-40");
     expect(aura).toHaveStyle({
       background: "linear-gradient(135deg, #E31837, #FFB81C)",
     });

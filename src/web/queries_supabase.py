@@ -317,187 +317,160 @@ def get_players_list(
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     """
-    Get players list by aggregating from WEEKLY game stats using 3 separate focused queries.
-    Uses the EXACT same efficient pattern as the season leaderboards (passing_season, rushing_season, receiving_season).
-    This ensures ALL players appear with CORRECT stats, including rookies like Drake Maye & Bo Nix.
+    Players with Stats ONLY (INNER JOIN)
+    Uses !inner to force INNER JOIN on stats table - only shows players who have
+    season stats for the requested season. Includes rookies like Dart/Egbuka who HAVE stats,
+    but excludes practice squad players with no stats.
     """
     if season is None:
         return []
+
+    # Defensive/special teams positions to BLOCK
+    blocked_positions = {"DB", "CB", "S", "SS", "FS", "LB", "ILB", "OLB", "DL", "DE", "DT", "NT", "OL", "OT", "OG", "C", "K", "P", "LS"}
     
-    # Base filters
-    base_filters = {
+    # Build filters for the INNER JOIN query
+    player_filters: dict[str, Any] = {}
+    
+    # Filter by team if specified
+    if team:
+        t = sb.select("nfl_teams", select="id", filters={"abbreviation": f"eq.{team}"}, limit=1)
+        if t:
+            team_id = _safe_int(t[0].get("id"))
+            if team_id:
+                player_filters["team_id"] = f"eq.{team_id}"
+    
+    # Text search on name
+    needle = _sanitize_search(q)
+    if needle:
+        player_filters["or"] = f"(first_name.ilike.*{needle}*,last_name.ilike.*{needle}*)"
+    
+    # CRITICAL: Filter stats by season (PostgREST foreign table filter syntax)
+    player_filters["nfl_player_season_stats.season"] = f"eq.{int(season)}"
+    player_filters["nfl_player_season_stats.postseason"] = "eq.false"
+    
+    # STRATEGY: Query from nfl_player_season_stats (ordered by passing_yards desc)
+    # This ensures we get the TOP players, not just alphabetically first 1000
+    safe_limit = max(int(limit or 0), 1)
+    safe_offset = max(int(offset or 0), 0)
+    
+    # Build filters for the stats table
+    stats_filters: dict[str, Any] = {
         "season": f"eq.{int(season)}",
         "postseason": "eq.false",
     }
     
-    # Team filter
+    # Build embed filter for nfl_players (team + name search)
+    embed_filters = []
     if team:
         t = sb.select("nfl_teams", select="id", filters={"abbreviation": f"eq.{team}"}, limit=1)
         if t:
-            tid = _safe_int(t[0].get("id"))
-            if tid:
-                base_filters["team_id"] = f"eq.{tid}"
+            team_id = _safe_int(t[0].get("id"))
+            if team_id:
+                embed_filters.append(f"team_id.eq.{team_id}")
+    if needle:
+        embed_filters.append(f"or(first_name.ilike.*{needle}*,last_name.ilike.*{needle}*)")
     
-    # Fetch passing stats (EXACT same query as passing_season)
-    passing_filters = {**base_filters, "or": "(passing_yards.gt.0,passing_attempts.gt.0,passing_touchdowns.gt.0)"}
-    passing_stats = sb.select(
-        "nfl_player_game_stats",
-        select="player_id,team_id,passing_attempts,passing_completions,passing_yards,passing_touchdowns,passing_interceptions",
-        filters=passing_filters,
-        limit=12000,
+    embed_filter_str = ",".join(embed_filters) if embed_filters else ""
+    
+    # Request many rows; Supabase will cap at ~1000
+    req_limit = 5000
+    req_offset = 0
+    
+    # Query from stats table, embed players, order by passing_yards (gets QBs first, which is fine)
+    stats_rows = sb.select(
+        "nfl_player_season_stats",
+        select=(
+            "player_id,games_played,"
+            "passing_attempts,passing_completions,passing_yards,passing_touchdowns,passing_interceptions,"
+            "qbr,qb_rating,"
+            "rushing_attempts,rushing_yards,rushing_touchdowns,"
+            "receptions,receiving_yards,receiving_touchdowns,receiving_targets,"
+            f"nfl_players!inner({embed_filter_str if embed_filter_str else ''}id,first_name,last_name,position_abbreviation,team_id,nfl_teams(abbreviation))"
+        ),
+        filters=stats_filters,
+        order="passing_yards.desc.nullslast",
+        limit=req_limit,
+        offset=req_offset,
     )
     
-    # Fetch rushing stats (EXACT same query as rushing_season)
-    rushing_filters = {**base_filters, "or": "(rushing_yards.gt.0,rushing_attempts.gt.0,rushing_touchdowns.gt.0)"}
-    rushing_stats = sb.select(
-        "nfl_player_game_stats",
-        select="player_id,team_id,rushing_attempts,rushing_yards,rushing_touchdowns",
-        filters=rushing_filters,
-        limit=12000,
-    )
-    
-    # Fetch receiving stats (EXACT same query as receiving_season)
-    receiving_filters = {**base_filters, "or": "(receiving_yards.gt.0,receptions.gt.0,receiving_targets.gt.0)"}
-    receiving_stats = sb.select(
-        "nfl_player_game_stats",
-        select="player_id,team_id,receiving_targets,receptions,receiving_yards,receiving_touchdowns",
-        filters=receiving_filters,
-        limit=12000,
-    )
-    
-    # Aggregate by player_id across all 3 stat types (EXACT same pattern as season leaderboards)
-    player_totals: dict[int, dict[str, Any]] = {}
-    
-    # Aggregate passing stats
-    for r in passing_stats:
-        pid = _safe_int(r.get("player_id"))
-        if pid is None:
+    # Restructure: convert stats-centric rows to player-centric
+    players = []
+    for stat_row in stats_rows:
+        player_obj = stat_row.get("nfl_players")
+        if not player_obj:
             continue
-        if pid not in player_totals:
-            player_totals[pid] = {
-                "team_id": _safe_int(r.get("team_id")),
-                "passing_attempts": 0,
-                "passing_completions": 0,
-                "passing_yards": 0,
-                "passing_tds": 0,
-                "passing_ints": 0,
-                "rushing_attempts": 0,
-                "rushing_yards": 0,
-                "rushing_tds": 0,
-                "targets": 0,
-                "receptions": 0,
-                "rec_yards": 0,
-                "rec_tds": 0,
-            }
-        player_totals[pid]["passing_attempts"] += _safe_int(r.get("passing_attempts")) or 0
-        player_totals[pid]["passing_completions"] += _safe_int(r.get("passing_completions")) or 0
-        player_totals[pid]["passing_yards"] += _safe_int(r.get("passing_yards")) or 0
-        player_totals[pid]["passing_tds"] += _safe_int(r.get("passing_touchdowns")) or 0
-        player_totals[pid]["passing_ints"] += _safe_int(r.get("passing_interceptions")) or 0
+        # Merge stats into player object
+        player_obj["nfl_player_season_stats"] = [stat_row]
+        players.append(player_obj)
     
-    # Aggregate rushing stats
-    for r in rushing_stats:
-        pid = _safe_int(r.get("player_id"))
-        if pid is None:
-            continue
-        if pid not in player_totals:
-            player_totals[pid] = {
-                "team_id": _safe_int(r.get("team_id")),
-                "passing_attempts": 0,
-                "passing_completions": 0,
-                "passing_yards": 0,
-                "passing_tds": 0,
-                "passing_ints": 0,
-                "rushing_attempts": 0,
-                "rushing_yards": 0,
-                "rushing_tds": 0,
-                "targets": 0,
-                "receptions": 0,
-                "rec_yards": 0,
-                "rec_tds": 0,
-            }
-        player_totals[pid]["rushing_attempts"] += _safe_int(r.get("rushing_attempts")) or 0
-        player_totals[pid]["rushing_yards"] += _safe_int(r.get("rushing_yards")) or 0
-        player_totals[pid]["rushing_tds"] += _safe_int(r.get("rushing_touchdowns")) or 0
     
-    # Aggregate receiving stats
-    for r in receiving_stats:
-        pid = _safe_int(r.get("player_id"))
-        if pid is None:
-            continue
-        if pid not in player_totals:
-            player_totals[pid] = {
-                "team_id": _safe_int(r.get("team_id")),
-                "passing_attempts": 0,
-                "passing_completions": 0,
-                "passing_yards": 0,
-                "passing_tds": 0,
-                "passing_ints": 0,
-                "rushing_attempts": 0,
-                "rushing_yards": 0,
-                "rushing_tds": 0,
-                "targets": 0,
-                "receptions": 0,
-                "rec_yards": 0,
-                "rec_tds": 0,
-            }
-        player_totals[pid]["targets"] += _safe_int(r.get("receiving_targets")) or 0
-        player_totals[pid]["receptions"] += _safe_int(r.get("receptions")) or 0
-        player_totals[pid]["rec_yards"] += _safe_int(r.get("receiving_yards")) or 0
-        player_totals[pid]["rec_tds"] += _safe_int(r.get("receiving_touchdowns")) or 0
-    
-    # Fetch player names and positions
-    pids = sorted(player_totals.keys())
-    if not pids:
-        return []
-    
-    players = sb.select("nfl_players", select="id,first_name,last_name,position_abbreviation,team_id", filters={"id": _in_list(pids)}, limit=len(pids))
-    pmap = {int(p["id"]): p for p in players if _safe_int(p.get("id")) is not None}
-    
-    # Fetch team abbreviations
-    team_ids = sorted({pt["team_id"] for pt in player_totals.values() if pt["team_id"] is not None})
-    tmap = _team_map(sb, [t for t in team_ids if t is not None])
-    
-    # Position filtering
+    # Process players with PYTHON-SIDE DEFENSIVE BLOCKING
+    out: list[dict[str, Any]] = []
     pos_filter = (position or "").strip().upper()
-    blocked_positions = {"DB", "CB", "S", "SS", "FS", "LB", "ILB", "OLB", "DL", "DE", "DT", "NT", "OL", "OT", "OG", "C", "K", "P", "LS"}
     
-    # Name search filter
-    needle = _sanitize_search(q)
-    
-    # Build output
-    out = []
-    for pid, totals in player_totals.items():
-        p = pmap.get(pid, {})
+    for p in players:
+        pid = _safe_int(p.get("id"))
+        if not pid:
+            continue
+        
         pos = (p.get("position_abbreviation") or "").strip().upper() or None
-        
-        # Position filtering
-        if pos and pos in blocked_positions:
-            continue
-        if pos_filter and pos and pos != pos_filter:
-            continue
-        
-        # Name search filtering
+
+        # Extract stats from embedded table (INNER JOIN guarantees at least one row)
+        stats_list = p.get("nfl_player_season_stats") or []
+        stats = stats_list[0] if stats_list else {}
+
+        games = _safe_int(stats.get("games_played")) or 0
+        targets = _safe_int(stats.get("receiving_targets")) or 0
+        rec = _safe_int(stats.get("receptions")) or 0
+        rec_yards = _safe_int(stats.get("receiving_yards")) or 0
+        rec_tds = _safe_int(stats.get("receiving_touchdowns")) or 0
+        rush_att = _safe_int(stats.get("rushing_attempts")) or 0
+        rush_yards = _safe_int(stats.get("rushing_yards")) or 0
+        rush_tds = _safe_int(stats.get("rushing_touchdowns")) or 0
+        pass_att = _safe_int(stats.get("passing_attempts")) or 0
+        pass_cmp = _safe_int(stats.get("passing_completions")) or 0
+        pass_yds = _safe_int(stats.get("passing_yards")) or 0
+        pass_tds = _safe_int(stats.get("passing_touchdowns")) or 0
+        pass_int = _safe_int(stats.get("passing_interceptions")) or 0
+        qb_rating = _safe_float(stats.get("qb_rating"))
+        qbr = _safe_float(stats.get("qbr"))
+
+        # Position Filtering (Defense Blocker)
+        # Special case: some feeds leave rookies as NULL/UNK/ROOKIE in nfl_players even though stats prove role.
+        is_unknown_pos = (not pos) or (pos in {"UNK", "UNKNOWN", "NULL", "ROOKIE"})
+        if pos in blocked_positions:
+            continue  # Defensive/special teams
+
+        if pos_filter:
+            if not is_unknown_pos:
+                if pos != pos_filter:
+                    continue
+            else:
+                # Heuristic: allow unknown position if stats clearly match the requested role.
+                if pos_filter == "QB":
+                    if not (pass_att > 0 or pass_yds > 0 or pass_tds > 0):
+                        continue
+                elif pos_filter == "RB":
+                    if not (rush_att > 0 or rush_yards > 0 or rush_tds > 0):
+                        continue
+                elif pos_filter in {"WR", "TE"}:
+                    if not (targets > 0 or rec > 0 or rec_yards > 0 or rec_tds > 0):
+                        continue
+                else:
+                    # Unknown filter value; be strict.
+                    continue
+
+        # Build player dict
         first = (p.get("first_name") or "").strip()
         last = (p.get("last_name") or "").strip()
         name = (first + " " + last).strip() or str(pid)
-        if needle:
-            if needle.lower() not in name.lower():
-                continue
         
-        tid = totals["team_id"]
-        team_abbr = tmap.get(tid) if tid is not None else None
+        team_obj = p.get("nfl_teams") or {}
+        team_abbr = team_obj.get("abbreviation") or None
         
-        # Calculate derived stats
-        rec = totals["receptions"]
-        rec_yards = totals["rec_yards"]
-        rush_att = totals["rushing_attempts"]
-        rush_yards = totals["rushing_yards"]
         avg_ypc = (float(rec_yards) / float(rec)) if rec else 0.0
         avg_ypr = (float(rush_yards) / float(rush_att)) if rush_att else 0.0
-        
-        # Calculate games played (simple estimation)
-        games = 1  # Approximation - at least 1 game if they have stats
+        photo = player_photo_url_from_name_team(name=name, team=team_abbr)
         
         out.append(
             {
@@ -506,44 +479,54 @@ def get_players_list(
                 "team": team_abbr,
                 "position": pos or "UNK",
                 "season": season,
-                "games": games,  # Approximation
-                "targets": totals["targets"],
+                "games": games,
+                "targets": targets,
                 "receptions": rec,
                 "receivingYards": rec_yards,
-                "receivingTouchdowns": totals["rec_tds"],
+                "receivingTouchdowns": rec_tds,
                 "avgYardsPerCatch": avg_ypc,
                 "rushAttempts": rush_att,
                 "rushingYards": rush_yards,
-                "rushingTouchdowns": totals["rushing_tds"],
+                "rushingTouchdowns": rush_tds,
                 "avgYardsPerRush": avg_ypr,
-                "passingAttempts": totals["passing_attempts"],
-                "passingCompletions": totals["passing_completions"],
-                "passingYards": totals["passing_yards"],
-                "passingTouchdowns": totals["passing_tds"],
-                "passingInterceptions": totals["passing_ints"],
-                "qbRating": None,  # Not calculated from weekly aggregation
-                "qbr": None,  # Not calculated from weekly aggregation
-                "photoUrl": player_photo_url_from_name_team(name=name, team=team_abbr),
+                "passingAttempts": pass_att,
+                "passingCompletions": pass_cmp,
+                "passingYards": pass_yds,
+                "passingTouchdowns": pass_tds,
+                "passingInterceptions": pass_int,
+                "qbRating": qb_rating,
+                "qbr": qbr,
+                "photoUrl": photo,
             }
         )
     
-    # Position-aware sorting: QBs by passing yards, everyone else by total production
+    # DON'T break early! We must process ALL fetched players before sorting/slicing
+    # Otherwise players like "Stafford" (late alphabetically) get cut off
+    
+    if needle:
+        # Keep name order for search results; slice to requested limit.
+        return out[:safe_limit]
+
+    # Sort by position-specific primary yards (QB: passing, RB: rushing, WR/TE: receiving)
     def sort_key(r: dict[str, Any]) -> int:
         pos = (r.get("position") or "").strip().upper()
+        pass_yds = int(r.get("passingYards") or 0)
+        rush_yds = int(r.get("rushingYards") or 0)
+        rec_yds = int(r.get("receivingYards") or 0)
+        
         if pos == "QB":
-            return int(r.get("passingYards") or 0)
+            return pass_yds
+        elif pos in {"RB", "HB"}:
+            return rush_yds
+        elif pos in {"WR", "TE"}:
+            return rec_yds
         else:
-            return (
-                int(r.get("passingYards") or 0) +
-                int(r.get("rushingYards") or 0) +
-                int(r.get("receivingYards") or 0)
-            )
-    
+            # Unknown position: use total yards
+            return pass_yds + rush_yds + rec_yds
+
     out.sort(key=sort_key, reverse=True)
-    
-    # Apply offset and limit
-    start = max(int(offset or 0), 0)
-    end = start + max(int(limit or 250), 1)
+    start = safe_offset
+    end = safe_offset + safe_limit
     return out[start:end]
 
 
@@ -857,10 +840,11 @@ def receiving_season(
     *,
     season: int,
     team: Optional[str],
+    q: Optional[str] = None,
     limit: int,
 ) -> list[dict[str, Any]]:
     # Use season stats; team is best-effort (current team).
-    rows = get_players_list(sb, season=season, position=None, team=team, limit=8000)
+    rows = get_players_list(sb, season=season, position=None, team=team, q=q, limit=8000)
     # compute team target share within returned team scope
     by_team: dict[str, int] = {}
     for r in rows:
@@ -906,12 +890,13 @@ def rushing_season(
     season: int,
     team: Optional[str],
     position: Optional[str],
+    q: Optional[str] = None,
     limit: int,
 ) -> list[dict[str, Any]]:
     pos_raw = (position or "").strip().upper()
     pos_filter = None if pos_raw in {"", "ALL"} else ("RB" if pos_raw == "HB" else pos_raw)
 
-    rows = get_players_list(sb, season=season, position=pos_filter, team=team, limit=8000)
+    rows = get_players_list(sb, season=season, position=pos_filter, team=team, q=q, limit=8000)
     by_team: dict[str, int] = {}
     for r in rows:
         t = r.get("team") or ""
@@ -1043,28 +1028,86 @@ def passing_season(
     season: int,
     team: Optional[str],
     position: Optional[str],
+    q: Optional[str] = None,
     limit: int,
 ) -> list[dict[str, Any]]:
-    # Passing is overwhelmingly QB; allow override.
-    pos_filter = (position or "QB").strip().upper()
-    rows = get_players_list(sb, season=season, position=pos_filter, team=team, limit=8000)
+    # Keep this endpoint simple and robust: query the season-stats table directly and order by passing yards.
+    # This avoids relying on broad player-list queries that may be subject to server-side max row caps.
+    pos_raw = (position or "").strip().upper()
+    pos_filter = None if pos_raw in {"", "ALL"} else pos_raw
+
+    filters: dict[str, Any] = {
+        "season": f"eq.{int(season)}",
+        "postseason": "eq.false",
+        "or": "(passing_yards.gt.0,passing_attempts.gt.0,passing_touchdowns.gt.0)",
+    }
+
+    if team:
+        t = sb.select("nfl_teams", select="id", filters={"abbreviation": f"eq.{team}"}, limit=1)
+        tid = _safe_int(t[0].get("id")) if t else None
+        if tid is not None:
+            # PostgREST foreign-table filter syntax (season_stats -> nfl_players).
+            filters["nfl_players.team_id"] = f"eq.{tid}"
+
+    needle = _sanitize_search(q)
+    if needle:
+        filters["nfl_players.or"] = f"(first_name.ilike.*{needle}*,last_name.ilike.*{needle}*)"
+
+    # Fetch a buffer to allow python-side position heuristics for unknown positions.
+    req_limit = 1000
+    rows = sb.select(
+        "nfl_player_season_stats",
+        select=(
+            "player_id,passing_attempts,passing_completions,passing_yards,passing_touchdowns,passing_interceptions,"
+            "nfl_players(first_name,last_name,position_abbreviation,team_id,nfl_teams(abbreviation))"
+        ),
+        filters=filters,
+        order="passing_yards.desc.nullslast,passing_touchdowns.desc.nullslast",
+        limit=req_limit,
+    )
+
     out: list[dict[str, Any]] = []
     for r in rows:
+        pid = _safe_int(r.get("player_id"))
+        if pid is None:
+            continue
+
+        p = r.get("nfl_players") or {}
+        pos = (p.get("position_abbreviation") or "").strip().upper() or None
+        is_unknown_pos = (not pos) or (pos in {"UNK", "UNKNOWN", "NULL", "ROOKIE"})
+
+        # If the user filtered for a position, enforce it, but allow unknown positions when stats prove the role.
+        if pos_filter:
+            if not is_unknown_pos and pos != pos_filter:
+                continue
+            if is_unknown_pos and pos_filter == "QB":
+                # rows are already passing-only; still keep the check explicit.
+                pass_yds = _safe_int(r.get("passing_yards")) or 0
+                pass_att = _safe_int(r.get("passing_attempts")) or 0
+                pass_tds = _safe_int(r.get("passing_touchdowns")) or 0
+                if not (pass_yds > 0 or pass_att > 0 or pass_tds > 0):
+                    continue
+
+        team_obj = p.get("nfl_teams") or {}
+        team_abbr = team_obj.get("abbreviation") or None
+        name = (str(p.get("first_name") or "").strip() + " " + str(p.get("last_name") or "").strip()).strip() or str(pid)
+
         out.append(
             {
                 "season": season,
-                "team": r.get("team"),
-                "player_id": r.get("player_id"),
-                "player_name": r.get("player_name"),
-                "position": r.get("position"),
-                "passing_attempts": int(r.get("passingAttempts") or 0),
-                "passing_completions": int(r.get("passingCompletions") or 0),
-                "passing_yards": int(r.get("passingYards") or 0),
-                "passing_tds": int(r.get("passingTouchdowns") or 0),
-                "interceptions": int(r.get("passingInterceptions") or 0),
-                "photoUrl": player_photo_url_from_name_team(name=str(r.get("player_name") or ""), team=str(r.get("team") or "")),
+                "team": team_abbr,
+                "player_id": str(pid),
+                "player_name": name,
+                "position": pos or "UNK",
+                "passing_attempts": _safe_int(r.get("passing_attempts")) or 0,
+                "passing_completions": _safe_int(r.get("passing_completions")) or 0,
+                "passing_yards": _safe_int(r.get("passing_yards")) or 0,
+                "passing_tds": _safe_int(r.get("passing_touchdowns")) or 0,
+                "interceptions": _safe_int(r.get("passing_interceptions")) or 0,
+                "photoUrl": player_photo_url_from_name_team(name=name, team=team_abbr),
             }
         )
+
     out.sort(key=lambda x: int(x.get("passing_yards") or 0), reverse=True)
     return out[: min(max(limit, 1), 200)]
 
@@ -1156,6 +1199,7 @@ def total_yards_season(
     season: int,
     team: Optional[str],
     position: Optional[str],
+    q: Optional[str] = None,
     limit: int,
 ) -> list[dict[str, Any]]:
     # Default behavior: show skill players (RB/WR/TE). `HB` is treated as `RB`.
@@ -1170,7 +1214,7 @@ def total_yards_season(
     # Defensive/special teams positions to exclude (unless user explicitly filters for them)
     blocked_positions = {"DB", "CB", "S", "SS", "FS", "LB", "ILB", "OLB", "DL", "DE", "DT", "NT", "OL", "OT", "OG", "C", "K", "P", "LS"}
 
-    rows = get_players_list(sb, season=season, position=None, team=team, limit=8000)
+    rows = get_players_list(sb, season=season, position=None, team=team, q=q, limit=8000)
     out: list[dict[str, Any]] = []
     for r in rows:
         pos = (str(r.get("position") or "")).strip().upper()

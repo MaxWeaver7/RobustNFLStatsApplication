@@ -58,8 +58,15 @@ export default function Leaderboards() {
     base.set("season", String(season));
     if (team) base.set("team", team);
     if (position && position !== "ALL") base.set("position", position);
-    base.set("limit", "50");
+    // We do client-side search on `rows`, so requesting too few rows makes many valid players
+    // impossible to find. Backend caps responses to 200 rows, so we request up to that cap.
+    base.set("limit", mode === "season" ? "200" : "100");
     if (mode === "weekly") base.set("week", String(week));
+
+    // If the user is searching, pass it to the backend so we can find players that aren't in the
+    // current top-N slice. Keep this conservative to avoid hammering the API on single-char input.
+    const needle = search.trim();
+    if (needle.length >= 2) base.set("q", needle);
 
     if (category === "receiving") {
       return mode === "weekly"
@@ -80,7 +87,7 @@ export default function Leaderboards() {
     return mode === "weekly"
       ? `/api/total_yards_dashboard?${base.toString()}`
       : `/api/total_yards_season?${base.toString()}`;
-  }, [mode, category, season, week, team, position]);
+  }, [mode, category, season, week, team, position, search]);
 
   const [rows, setRows] = useState<Row[]>([]);
   // Start in "loading" to avoid flashing empty/no-results before the first request begins.
