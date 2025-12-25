@@ -1,4 +1,5 @@
-import { AreaChart, Area, ResponsiveContainer, Tooltip, ReferenceLine } from 'recharts';
+import { useId } from "react";
+import { AreaChart, Area, ResponsiveContainer, Tooltip, ReferenceLine } from "recharts";
 
 interface StatSparklineProps {
   data: number[];
@@ -24,7 +25,9 @@ export function StatSparkline({ data, average, unit = 'Yds', className }: StatSp
   const isFlat = lastValue === firstValue;
 
   const strokeColor = isPositive ? '#10b981' : isFlat ? '#9ca3af' : '#f43f5e';
-  const gradientId = `gradient-${isPositive ? 'positive' : isFlat ? 'flat' : 'negative'}`;
+  const reactId = useId();
+  // `useId()` can contain ":"; sanitize to keep the SVG id/url reference robust.
+  const gradientId = `gradient-${reactId}-${isPositive ? "positive" : isFlat ? "flat" : "negative"}`.replace(/:/g, "");
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload }: any) => {

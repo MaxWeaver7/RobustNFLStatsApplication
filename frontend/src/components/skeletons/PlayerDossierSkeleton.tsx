@@ -66,3 +66,4 @@ export function PlayerDossierSkeleton({ position, className }: PlayerDossierSkel
   );
 }
 
+

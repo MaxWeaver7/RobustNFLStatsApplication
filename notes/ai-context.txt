@@ -47,3 +47,4 @@ Repo integration notes
   - supabase/schema_stats.sql
 - Performance + patterns (avoid regressions like “limit cuts off real players”):
   - docs/PERFORMANCE.md
+

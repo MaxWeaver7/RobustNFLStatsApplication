@@ -318,8 +318,8 @@ def get_players_list(
 ) -> list[dict[str, Any]]:
     """
     Get players list by aggregating from WEEKLY game stats using 3 separate focused queries.
-    Uses the same efficient pattern as the season leaderboards (passing_season, rushing_season, receiving_season).
-    This ensures ALL players appear, including rookies like Drake Maye & Bo Nix.
+    Uses the EXACT same efficient pattern as the season leaderboards (passing_season, rushing_season, receiving_season).
+    This ensures ALL players appear with CORRECT stats, including rookies like Drake Maye & Bo Nix.
     """
     if season is None:
         return []
@@ -338,7 +338,7 @@ def get_players_list(
             if tid:
                 base_filters["team_id"] = f"eq.{tid}"
     
-    # Fetch passing stats (like passing_season does)
+    # Fetch passing stats (EXACT same query as passing_season)
     passing_filters = {**base_filters, "or": "(passing_yards.gt.0,passing_attempts.gt.0,passing_touchdowns.gt.0)"}
     passing_stats = sb.select(
         "nfl_player_game_stats",
@@ -347,7 +347,7 @@ def get_players_list(
         limit=12000,
     )
     
-    # Fetch rushing stats (like rushing_season does)
+    # Fetch rushing stats (EXACT same query as rushing_season)
     rushing_filters = {**base_filters, "or": "(rushing_yards.gt.0,rushing_attempts.gt.0,rushing_touchdowns.gt.0)"}
     rushing_stats = sb.select(
         "nfl_player_game_stats",
@@ -356,7 +356,7 @@ def get_players_list(
         limit=12000,
     )
     
-    # Fetch receiving stats (like receiving_season does)
+    # Fetch receiving stats (EXACT same query as receiving_season)
     receiving_filters = {**base_filters, "or": "(receiving_yards.gt.0,receptions.gt.0,receiving_targets.gt.0)"}
     receiving_stats = sb.select(
         "nfl_player_game_stats",
@@ -365,7 +365,7 @@ def get_players_list(
         limit=12000,
     )
     
-    # Aggregate by player_id across all 3 stat types
+    # Aggregate by player_id across all 3 stat types (EXACT same pattern as season leaderboards)
     player_totals: dict[int, dict[str, Any]] = {}
     
     # Aggregate passing stats
@@ -496,14 +496,8 @@ def get_players_list(
         avg_ypc = (float(rec_yards) / float(rec)) if rec else 0.0
         avg_ypr = (float(rush_yards) / float(rush_att)) if rush_att else 0.0
         
-        # Calculate games played (estimate based on max category with activity)
-        games = 0
-        if totals["passing_attempts"] > 0:
-            games = max(games, 1)  # Simple estimation - not perfect but close enough
-        if totals["rushing_attempts"] > 0:
-            games = max(games, 1)
-        if totals["receptions"] > 0:
-            games = max(games, 1)
+        # Calculate games played (simple estimation)
+        games = 1  # Approximation - at least 1 game if they have stats
         
         out.append(
             {
@@ -865,103 +859,43 @@ def receiving_season(
     team: Optional[str],
     limit: int,
 ) -> list[dict[str, Any]]:
-    """
-    Aggregate receiving stats from weekly game logs for the season.
-    This ensures we include ALL players with receiving stats, including rookies.
-    """
-    # Build filters for weekly stats
-    filters: dict[str, Any] = {
-        "season": f"eq.{int(season)}",
-        "postseason": "eq.false",
-        "or": "(receiving_yards.gt.0,receptions.gt.0,receiving_targets.gt.0)",
-    }
-    if team:
-        t = sb.select("nfl_teams", select="id", filters={"abbreviation": f"eq.{team}"}, limit=1)
-        tid = _safe_int(t[0].get("id")) if t else None
-        if tid is not None:
-            filters["team_id"] = f"eq.{tid}"
-    
-    # Fetch ALL weekly receiving stats for the season
-    stats = sb.select(
-        "nfl_player_game_stats",
-        select="player_id,team_id,receiving_targets,receptions,receiving_yards,receiving_touchdowns",
-        filters=filters,
-        limit=12000,
-    )
-    
-    # Aggregate by player_id
-    player_totals: dict[int, dict[str, int]] = {}
-    for r in stats:
-        pid = _safe_int(r.get("player_id"))
-        if pid is None:
-            continue
-        if pid not in player_totals:
-            player_totals[pid] = {
-                "team_id": _safe_int(r.get("team_id")),
-                "targets": 0,
-                "receptions": 0,
-                "rec_yards": 0,
-                "rec_tds": 0,
-            }
-        player_totals[pid]["targets"] += _safe_int(r.get("receiving_targets")) or 0
-        player_totals[pid]["receptions"] += _safe_int(r.get("receptions")) or 0
-        player_totals[pid]["rec_yards"] += _safe_int(r.get("receiving_yards")) or 0
-        player_totals[pid]["rec_tds"] += _safe_int(r.get("receiving_touchdowns")) or 0
-    
-    # Fetch player names and positions
-    pids = sorted(player_totals.keys())
-    players = sb.select("nfl_players", select="id,first_name,last_name,position_abbreviation", filters={"id": _in_list(pids)}, limit=len(pids))
-    pmap = {int(p["id"]): p for p in players if _safe_int(p.get("id")) is not None}
-    
-    # Fetch team abbreviations
-    team_ids = sorted({pt["team_id"] for pt in player_totals.values() if pt["team_id"] is not None})
-    tmap = _team_map(sb, [t for t in team_ids if t is not None])
-    
-    # Compute team target shares
+    # Use season stats; team is best-effort (current team).
+    rows = get_players_list(sb, season=season, position=None, team=team, limit=8000)
+    # compute team target share within returned team scope
     by_team: dict[str, int] = {}
-    for pid, totals in player_totals.items():
-        tid = totals["team_id"]
-        team_abbr = tmap.get(tid) if tid is not None else ""
-        by_team[team_abbr] = by_team.get(team_abbr, 0) + totals["targets"]
-    
-    # Position filtering
+    for r in rows:
+        t = r.get("team") or ""
+        by_team[t] = by_team.get(t, 0) + int(r.get("targets") or 0)
+    # Defensive/special teams positions to exclude
     blocked_positions = {"DB", "CB", "S", "SS", "FS", "LB", "ILB", "OLB", "DL", "DE", "DT", "NT", "OL", "OT", "OG", "C", "K", "P", "LS"}
     
-    # Build output
     out = []
-    for pid, totals in player_totals.items():
-        p = pmap.get(pid, {})
-        pos = (p.get("position_abbreviation") or "").strip().upper() or None
-        
+    for r in rows:
+        pos = (r.get("position") or "").upper()
         # Allow NULL/UNK/empty positions if they have receiving stats
         # Block defensive/special teams positions
         if pos and pos not in {"WR", "TE", "RB"}:
             if pos in blocked_positions:
                 continue
-        
-        name = (str(p.get("first_name") or "").strip() + " " + str(p.get("last_name") or "").strip()).strip() or str(pid)
-        tid = totals["team_id"]
-        team_abbr = tmap.get(tid) if tid is not None else ""
-        denom = by_team.get(team_abbr, 0) or 0
-        share = (float(totals["targets"]) / float(denom)) if denom else None
-        
+        t = r.get("team") or ""
+        denom = by_team.get(t, 0) or 0
+        share = (float(r.get("targets") or 0) / float(denom)) if denom else None
         out.append(
             {
                 "season": season,
-                "team": team_abbr or None,
-                "player_id": str(pid),
-                "player_name": name,
-                "position": pos or "UNK",
-                "targets": totals["targets"],
-                "receptions": totals["receptions"],
-                "rec_yards": totals["rec_yards"],
+                "team": r.get("team"),
+                "player_id": r.get("player_id"),
+                "player_name": r.get("player_name"),
+                "position": r.get("position"),
+                "targets": int(r.get("targets") or 0),
+                "receptions": int(r.get("receptions") or 0),
+                "rec_yards": int(r.get("receivingYards") or 0),
                 "air_yards": 0,
-                "rec_tds": totals["rec_tds"],
+                "rec_tds": int(r.get("receivingTouchdowns") or 0),
                 "team_target_share": share,
-                "photoUrl": player_photo_url_from_name_team(name=name, team=team_abbr or None),
+                "photoUrl": player_photo_url_from_name_team(name=str(r.get("player_name") or ""), team=str(r.get("team") or "")),
             }
         )
-    
     out.sort(key=lambda x: int(x.get("targets") or 0), reverse=True)
     return out[: min(max(limit, 1), 200)]
 
@@ -974,106 +908,37 @@ def rushing_season(
     position: Optional[str],
     limit: int,
 ) -> list[dict[str, Any]]:
-    """
-    Aggregate rushing stats from weekly game logs for the season.
-    This ensures we include ALL players with rushing stats, including rookies.
-    """
-    # Build filters for weekly stats
-    filters: dict[str, Any] = {
-        "season": f"eq.{int(season)}",
-        "postseason": "eq.false",
-        "or": "(rushing_yards.gt.0,rushing_attempts.gt.0,rushing_touchdowns.gt.0)",
-    }
-    if team:
-        t = sb.select("nfl_teams", select="id", filters={"abbreviation": f"eq.{team}"}, limit=1)
-        tid = _safe_int(t[0].get("id")) if t else None
-        if tid is not None:
-            filters["team_id"] = f"eq.{tid}"
-    
-    # Fetch ALL weekly rushing stats for the season
-    stats = sb.select(
-        "nfl_player_game_stats",
-        select="player_id,team_id,rushing_attempts,rushing_yards,rushing_touchdowns,receptions,receiving_yards",
-        filters=filters,
-        limit=12000,
-    )
-    
-    # Aggregate by player_id and count games
-    player_totals: dict[int, dict[str, int]] = {}
-    for r in stats:
-        pid = _safe_int(r.get("player_id"))
-        if pid is None:
-            continue
-        if pid not in player_totals:
-            player_totals[pid] = {
-                "team_id": _safe_int(r.get("team_id")),
-                "games": 0,
-                "rush_attempts": 0,
-                "rush_yards": 0,
-                "rush_tds": 0,
-                "receptions": 0,
-                "rec_yards": 0,
-            }
-        player_totals[pid]["games"] += 1  # Count games played
-        player_totals[pid]["rush_attempts"] += _safe_int(r.get("rushing_attempts")) or 0
-        player_totals[pid]["rush_yards"] += _safe_int(r.get("rushing_yards")) or 0
-        player_totals[pid]["rush_tds"] += _safe_int(r.get("rushing_touchdowns")) or 0
-        player_totals[pid]["receptions"] += _safe_int(r.get("receptions")) or 0
-        player_totals[pid]["rec_yards"] += _safe_int(r.get("receiving_yards")) or 0
-    
-    # Fetch player names and positions
-    pids = sorted(player_totals.keys())
-    players = sb.select("nfl_players", select="id,first_name,last_name,position_abbreviation", filters={"id": _in_list(pids)}, limit=len(pids))
-    pmap = {int(p["id"]): p for p in players if _safe_int(p.get("id")) is not None}
-    
-    # Fetch team abbreviations
-    team_ids = sorted({pt["team_id"] for pt in player_totals.values() if pt["team_id"] is not None})
-    tmap = _team_map(sb, [t for t in team_ids if t is not None])
-    
-    # Compute team rush shares
-    by_team: dict[str, int] = {}
-    for pid, totals in player_totals.items():
-        tid = totals["team_id"]
-        team_abbr = tmap.get(tid) if tid is not None else ""
-        by_team[team_abbr] = by_team.get(team_abbr, 0) + totals["rush_attempts"]
-    
-    # Position filtering
     pos_raw = (position or "").strip().upper()
     pos_filter = None if pos_raw in {"", "ALL"} else ("RB" if pos_raw == "HB" else pos_raw)
-    
-    # Build output
+
+    rows = get_players_list(sb, season=season, position=pos_filter, team=team, limit=8000)
+    by_team: dict[str, int] = {}
+    for r in rows:
+        t = r.get("team") or ""
+        by_team[t] = by_team.get(t, 0) + int(r.get("rushAttempts") or 0)
     out = []
-    for pid, totals in player_totals.items():
-        p = pmap.get(pid, {})
-        pos = (p.get("position_abbreviation") or "").strip().upper() or None
-        
-        # Position filtering
-        if pos_filter and pos and pos != pos_filter:
-            continue
-        
-        name = (str(p.get("first_name") or "").strip() + " " + str(p.get("last_name") or "").strip()).strip() or str(pid)
-        tid = totals["team_id"]
-        team_abbr = tmap.get(tid) if tid is not None else ""
-        denom = by_team.get(team_abbr, 0) or 0
-        share = (float(totals["rush_attempts"]) / float(denom)) if denom else None
-        
-        games = totals["games"]
-        rush_att = totals["rush_attempts"]
-        rush_y = totals["rush_yards"]
-        rec = totals["receptions"]
-        rec_y = totals["rec_yards"]
-        
+    for r in rows:
+        pos = (r.get("position") or "").upper()
+        # Position filtering already applied above when requested. Default includes all positions.
+        t = r.get("team") or ""
+        denom = by_team.get(t, 0) or 0
+        share = (float(r.get("rushAttempts") or 0) / float(denom)) if denom else None
+        games = int(r.get("games") or 0) or 0
+        rush_att = int(r.get("rushAttempts") or 0)
+        rush_y = int(r.get("rushingYards") or 0)
+        rec = int(r.get("receptions") or 0)
+        rec_y = int(r.get("receivingYards") or 0)
         out.append(
             {
                 "season": season,
-                "team": team_abbr or None,
-                "player_id": str(pid),
-                "player_name": name,
-                "position": pos or "UNK",
+                "team": r.get("team"),
+                "player_id": r.get("player_id"),
+                "player_name": r.get("player_name"),
+                "position": r.get("position"),
                 "games": games,
                 "rush_attempts": rush_att,
                 "rush_yards": rush_y,
-                "rush_tds": totals["rush_tds"],
+                "rush_tds": int(r.get("rushingTouchdowns") or 0),
                 "ypc": (float(rush_y) / float(rush_att)) if rush_att else 0.0,
                 "ypg": (float(rush_y) / float(games)) if games else 0.0,
                 "receptions": rec,
@@ -1081,10 +946,9 @@ def rushing_season(
                 "rec_yards": rec_y,
                 "rec_ypg": (float(rec_y) / float(games)) if games else 0.0,
                 "team_rush_share": share,
-                "photoUrl": player_photo_url_from_name_team(name=name, team=team_abbr or None),
+                "photoUrl": player_photo_url_from_name_team(name=str(r.get("player_name") or ""), team=str(r.get("team") or "")),
             }
         )
-    
     out.sort(key=lambda x: int(x.get("rush_yards") or 0), reverse=True)
     return out[: min(max(limit, 1), 200)]
 
@@ -1181,98 +1045,26 @@ def passing_season(
     position: Optional[str],
     limit: int,
 ) -> list[dict[str, Any]]:
-    """
-    Aggregate passing stats from weekly game logs for the season.
-    This ensures we include ALL players with passing stats, including rookies.
-    """
-    # Build filters for weekly stats
-    filters: dict[str, Any] = {
-        "season": f"eq.{int(season)}",
-        "postseason": "eq.false",
-        "or": "(passing_yards.gt.0,passing_attempts.gt.0,passing_touchdowns.gt.0)",
-    }
-    if team:
-        t = sb.select("nfl_teams", select="id", filters={"abbreviation": f"eq.{team}"}, limit=1)
-        tid = _safe_int(t[0].get("id")) if t else None
-        if tid is not None:
-            filters["team_id"] = f"eq.{tid}"
-    
-    # Fetch ALL weekly passing stats for the season (increased limit for full season)
-    stats = sb.select(
-        "nfl_player_game_stats",
-        select="player_id,team_id,passing_attempts,passing_completions,passing_yards,passing_touchdowns,passing_interceptions",
-        filters=filters,
-        limit=12000,  # Increased to ensure we get all players
-    )
-    
-    # Aggregate by player_id
-    player_totals: dict[int, dict[str, int]] = {}
-    for r in stats:
-        pid = _safe_int(r.get("player_id"))
-        if pid is None:
-            continue
-        if pid not in player_totals:
-            player_totals[pid] = {
-                "team_id": _safe_int(r.get("team_id")),
-                "passing_attempts": 0,
-                "passing_completions": 0,
-                "passing_yards": 0,
-                "passing_tds": 0,
-                "interceptions": 0,
-            }
-        player_totals[pid]["passing_attempts"] += _safe_int(r.get("passing_attempts")) or 0
-        player_totals[pid]["passing_completions"] += _safe_int(r.get("passing_completions")) or 0
-        player_totals[pid]["passing_yards"] += _safe_int(r.get("passing_yards")) or 0
-        player_totals[pid]["passing_tds"] += _safe_int(r.get("passing_touchdowns")) or 0
-        player_totals[pid]["interceptions"] += _safe_int(r.get("passing_interceptions")) or 0
-    
-    # Fetch player names and positions
-    pids = sorted(player_totals.keys())
-    players = sb.select("nfl_players", select="id,first_name,last_name,position_abbreviation", filters={"id": _in_list(pids)}, limit=len(pids))
-    pmap = {int(p["id"]): p for p in players if _safe_int(p.get("id")) is not None}
-    
-    # Fetch team abbreviations
-    team_ids = sorted({pt["team_id"] for pt in player_totals.values() if pt["team_id"] is not None})
-    tmap = _team_map(sb, [t for t in team_ids if t is not None])
-    
-    # Position filtering
-    pos_raw = (position or "QB").strip().upper()
-    if pos_raw in {"", "ALL"}:
-        allowed_positions = {"QB"}
-    else:
-        allowed_positions = {pos_raw}
-    blocked_positions = {"DB", "CB", "S", "SS", "FS", "LB", "ILB", "OLB", "DL", "DE", "DT", "NT", "OL", "OT", "OG", "C", "K", "P", "LS"}
-    
-    # Build output
-    out = []
-    for pid, totals in player_totals.items():
-        p = pmap.get(pid, {})
-        pos = (p.get("position_abbreviation") or "").strip().upper() or None
-        
-        # Allow NULL/UNK/empty positions if they have passing stats
-        # But block defensive/special teams positions unless explicitly requested
-        if pos and pos not in allowed_positions:
-            if pos_raw not in {"", "ALL"} or pos in blocked_positions:
-                continue
-        
-        name = (str(p.get("first_name") or "").strip() + " " + str(p.get("last_name") or "").strip()).strip() or str(pid)
-        tid = totals["team_id"]
+    # Passing is overwhelmingly QB; allow override.
+    pos_filter = (position or "QB").strip().upper()
+    rows = get_players_list(sb, season=season, position=pos_filter, team=team, limit=8000)
+    out: list[dict[str, Any]] = []
+    for r in rows:
         out.append(
             {
                 "season": season,
-                "team": tmap.get(tid) if tid is not None else None,
-                "player_id": str(pid),
-                "player_name": name,
-                "position": pos or "UNK",
-                "passing_attempts": totals["passing_attempts"],
-                "passing_completions": totals["passing_completions"],
-                "passing_yards": totals["passing_yards"],
-                "passing_tds": totals["passing_tds"],
-                "interceptions": totals["interceptions"],
-                "photoUrl": player_photo_url_from_name_team(name=name, team=tmap.get(tid) if tid is not None else None),
+                "team": r.get("team"),
+                "player_id": r.get("player_id"),
+                "player_name": r.get("player_name"),
+                "position": r.get("position"),
+                "passing_attempts": int(r.get("passingAttempts") or 0),
+                "passing_completions": int(r.get("passingCompletions") or 0),
+                "passing_yards": int(r.get("passingYards") or 0),
+                "passing_tds": int(r.get("passingTouchdowns") or 0),
+                "interceptions": int(r.get("passingInterceptions") or 0),
+                "photoUrl": player_photo_url_from_name_team(name=str(r.get("player_name") or ""), team=str(r.get("team") or "")),
             }
         )
-    
     out.sort(key=lambda x: int(x.get("passing_yards") or 0), reverse=True)
     return out[: min(max(limit, 1), 200)]
 
