@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Header } from "@/components/Header";
 import { AnimatedSelect } from "@/components/common/AnimatedSelect";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -22,6 +22,10 @@ export default function Leaderboards() {
   const { data: options } = useFilterOptions();
   const navigate = useNavigate();
 
+  const loadTimerStarted = useRef(false);
+  const loadTimerEnded = useRef(false);
+  const hasStartedInitialLoad = useRef(false);
+
   const DEFAULT_SEASON = 2025;
   const [mode, setMode] = useState<Mode>("weekly");
   const [category, setCategory] = useState<Category>("receiving");
@@ -39,6 +43,15 @@ export default function Leaderboards() {
     if (seasons.length === 0) return;
     if (!seasons.includes(season)) setSeason(seasons[0]);
   }, [options?.seasons, season]);
+
+  // Reset animation flag on unmount (so it plays again on re-navigation)
+  useEffect(() => {
+    if (!loadTimerStarted.current) {
+      console.time("LeaderboardLoad");
+      loadTimerStarted.current = true;
+    }
+    return;
+  }, []);
 
   const endpoint = useMemo(() => {
     const base = new URLSearchParams();
@@ -70,12 +83,14 @@ export default function Leaderboards() {
   }, [mode, category, season, week, team, position]);
 
   const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Start in "loading" to avoid flashing empty/no-results before the first request begins.
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   // lightweight fetch-on-change (keeps this page isolated from react-query setup)
   useEffect(() => {
     let cancelled = false;
+    hasStartedInitialLoad.current = true;
     setLoading(true);
     setErr(null);
     
@@ -87,16 +102,22 @@ export default function Leaderboards() {
         if (cancelled) return;
         console.log(`[Leaderboards] Received ${data.rows?.length || 0} rows`);
         setRows(data.rows || []);
+        setLoading(false);
+        if (loadTimerStarted.current && !loadTimerEnded.current) {
+          console.timeEnd("LeaderboardLoad");
+          loadTimerEnded.current = true;
+        }
       })
       .catch((e) => {
         if (cancelled) return;
         console.error(`[Leaderboards] Error fetching data:`, e);
         setErr(String(e?.message || e));
         setRows([]);
-      })
-      .finally(() => {
-        if (cancelled) return;
         setLoading(false);
+        if (loadTimerStarted.current && !loadTimerEnded.current) {
+          console.timeEnd("LeaderboardLoad");
+          loadTimerEnded.current = true;
+        }
       });
     return () => {
       cancelled = true;
@@ -126,6 +147,30 @@ export default function Leaderboards() {
     });
     return sorted;
   }, [rows, search, sortKey, asc]);
+
+  const skeletonColumns = useMemo(() => {
+    if (category === "receiving") return 6; // Player, Team, TGT, REC, YDS, TD
+    if (category === "passing") return 7; // Player, Team, CMP, ATT, YDS, TD, INT
+    if (category === "total_yards") return 6; // Player, Team, RUSH, REC, TOTAL, TD
+    // rushing
+    return mode === "weekly" ? 8 : 11;
+  }, [category, mode]);
+
+  function TableSkeleton({ columns, rows: rowCount = 10 }: { columns: number; rows?: number }) {
+    return (
+      <>
+        {Array.from({ length: rowCount }).map((_, rIdx) => (
+          <TableRow key={`sk-${rIdx}`} className="border-border">
+            {Array.from({ length: columns }).map((__, cIdx) => (
+              <TableCell key={`sk-${rIdx}-${cIdx}`}>
+                <div className="h-4 w-full rounded bg-muted/40 animate-pulse" />
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </>
+    );
+  }
 
   const SortHead = ({ k, label, className }: { k: string; label: string; className?: string }) => {
     const active = sortKey === k;
@@ -177,20 +222,29 @@ export default function Leaderboards() {
                 onChange={(v) => setMode(v === "Weekly" ? "weekly" : "season")}
               />
 
-              <AnimatedSelect
-                label="Category"
-                options={["Receiving", "Rushing", "Passing", "Total Yards"]}
-                value={category === "receiving" ? "Receiving" : category === "rushing" ? "Rushing" : category === "passing" ? "Passing" : "Total Yards"}
-                onChange={(v) => {
-                  const map: Record<string, Category> = {
-                    "Receiving": "receiving",
-                    "Rushing": "rushing",
-                    "Passing": "passing",
-                    "Total Yards": "total_yards"
-                  };
-                  setCategory(map[v]);
-                }}
-              />
+              {/* Category Segmented Control */}
+              <div className="col-span-full sm:col-span-2 lg:col-span-4 flex items-center gap-1 p-1 bg-secondary/30 rounded-lg border border-border">
+                {(["Receiving", "Rushing", "Passing", "Total"] as const).map((cat) => {
+                  const catValue: Category = cat === "Total" ? "total_yards" : cat.toLowerCase() as Category;
+                  const isActive = category === catValue;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setCategory(catValue)}
+                      className={`
+                        flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-all
+                        ${isActive 
+                          ? "bg-primary text-primary-foreground shadow-sm" 
+                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                        }
+                      `}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
 
               <AnimatedSelect
                 label="Season"
@@ -224,12 +278,12 @@ export default function Leaderboards() {
                 onChange={(v) => setPosition(v === "All Positions" ? "ALL" : v)}
               />
 
-              <div className="lg:min-w-[240px] lg:max-w-md">
+              <div className="w-full max-w-full box-border lg:min-w-[240px] lg:max-w-md">
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search player…"
-                  className="w-full h-10 px-3 rounded-lg border border-border bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full max-w-full box-border h-10 px-3 rounded-lg border border-border bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
             </div>
@@ -287,100 +341,128 @@ export default function Leaderboards() {
                   )}
                 </TableRow>
               </TableHeader>
-              <TableBody>
-                {displayRows.map((r, i) => (
-                  <TableRow
-                    key={i}
-                    className="data-row border-border cursor-pointer"
-                    onClick={() => {
+              {loading ? (
+                <TableBody>
+                  <TableSkeleton columns={skeletonColumns} />
+                </TableBody>
+              ) : (
+                <TableBody>
+                  {displayRows.length === 0 ? (
+                    <TableRow className="border-border">
+                      <TableCell
+                        colSpan={skeletonColumns}
+                        className="py-10 text-center text-sm text-muted-foreground"
+                      >
+                        No results found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    displayRows.map((r) => {
                       const pid = String(r.player_id || "").trim();
-                      if (!pid) return;
-                      const qs = new URLSearchParams({ season: String(season), player_id: pid });
-                      navigate(`/?${qs.toString()}`);
-                    }}
-                  >
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full overflow-hidden bg-secondary ring-1 ring-border shrink-0">
-                          {r.photoUrl ? (
-                            <img 
-                              src={r.photoUrl} 
-                              className="w-full h-full object-cover" 
-                              loading="lazy"
-                              onError={(e) => {
-                                // Hide broken image, fallback will show
-                                (e.currentTarget as HTMLImageElement).style.display = "none";
-                              }}
-                            />
-                          ) : null}
-                          <div className={`w-full h-full flex items-center justify-center text-muted-foreground text-xs font-bold ${r.photoUrl ? "hidden" : ""}`}>
-                            {(r.player_name || r.player_id || "?")
-                              .toString()
-                              .split(" ")
-                              .filter(Boolean)
-                              .slice(0, 2)
-                              .map((n: string) => n[0])
-                              .join("")
-                              .toUpperCase()}
-                          </div>
-                        </div>
-                        <div className="min-w-0">
-                          <div className="truncate">{r.player_name || r.player_id}</div>
-                          <div className="text-xs text-muted-foreground">{r.position || "UNK"}</div>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">
-                      <div className="flex items-center gap-1.5">
-                        <TeamLogo team={r.team} size="sm" />
-                        <span>{r.team || "FA"}</span>
-                      </div>
-                    </TableCell>
+                      const stableKey =
+                        r.player_id ||
+                        r.id ||
+                        `${String(r.player_name || "player")}-${String(r.team || "team")}-${String(r.position || "pos")}`;
 
-                    {category === "receiving" ? (
-                      <>
-                        <TableCell className="text-center font-mono">{r.targets ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono">{r.receptions ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono font-semibold">{r.rec_yards ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono">{r.rec_tds ?? 0}</TableCell>
-                      </>
-                    ) : category === "rushing" ? (
-                      <>
-                        <TableCell className="text-center font-mono">{r.rush_attempts ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono font-semibold">{r.rush_yards ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono">{formatStat(r.ypc ?? 0)}</TableCell>
-                        {mode === "weekly" ? null : (
-                          <TableCell className="text-center font-mono">{formatStat(r.ypg ?? 0)}</TableCell>
+                      return (
+                        <TableRow
+                          key={stableKey}
+                          className="data-row border-border cursor-pointer hover:bg-muted/50 transition-colors"
+                          onClick={() => {
+                            if (!pid) return;
+                            const qs = new URLSearchParams({ season: String(season), player_id: pid });
+                            navigate(`/?${qs.toString()}`);
+                          }}
+                        >
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-full overflow-hidden bg-secondary ring-1 ring-border shrink-0">
+                              {r.photoUrl ? (
+                                <img
+                                  src={r.photoUrl}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                  onError={(e) => {
+                                    // Hide broken image, fallback will show
+                                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                                  }}
+                                />
+                              ) : null}
+                              <div
+                                className={`w-full h-full flex items-center justify-center text-muted-foreground text-xs font-bold ${
+                                  r.photoUrl ? "hidden" : ""
+                                }`}
+                              >
+                                {(r.player_name || r.player_id || "?")
+                                  .toString()
+                                  .split(" ")
+                                  .filter(Boolean)
+                                  .slice(0, 2)
+                                  .map((n: string) => n[0])
+                                  .join("")
+                                  .toUpperCase()}
+                              </div>
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate">{r.player_name || r.player_id}</div>
+                              <div className="text-xs text-muted-foreground">{r.position || "UNK"}</div>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">
+                          <div className="flex items-center gap-1.5">
+                            <TeamLogo team={r.team} size="sm" />
+                            <span>{r.team || "FA"}</span>
+                          </div>
+                        </TableCell>
+
+                        {category === "receiving" ? (
+                          <>
+                            <TableCell className="text-center font-mono">{r.targets ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono">{r.receptions ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono font-semibold">{r.rec_yards ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono">{r.rec_tds ?? 0}</TableCell>
+                          </>
+                        ) : category === "rushing" ? (
+                          <>
+                            <TableCell className="text-center font-mono">{r.rush_attempts ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono font-semibold">{r.rush_yards ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono">{formatStat(r.ypc ?? 0)}</TableCell>
+                            {mode === "weekly" ? null : (
+                              <TableCell className="text-center font-mono">{formatStat(r.ypg ?? 0)}</TableCell>
+                            )}
+                            <TableCell className="text-center font-mono">{r.receptions ?? 0}</TableCell>
+                            {mode === "weekly" ? null : (
+                              <TableCell className="text-center font-mono">{formatStat(r.rpg ?? 0)}</TableCell>
+                            )}
+                            <TableCell className="text-center font-mono">{r.rec_yards ?? 0}</TableCell>
+                            {mode === "weekly" ? null : (
+                              <TableCell className="text-center font-mono">{formatStat(r.rec_ypg ?? 0)}</TableCell>
+                            )}
+                            <TableCell className="text-center font-mono">{r.rush_tds ?? 0}</TableCell>
+                          </>
+                        ) : category === "passing" ? (
+                          <>
+                            <TableCell className="text-center font-mono">{r.passing_completions ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono">{r.passing_attempts ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono font-semibold">{r.passing_yards ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono">{r.passing_tds ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono">{r.interceptions ?? 0}</TableCell>
+                          </>
+                        ) : (
+                          <>
+                            <TableCell className="text-center font-mono">{r.rush_yards ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono">{r.rec_yards ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono font-semibold">{r.total_yards ?? 0}</TableCell>
+                            <TableCell className="text-center font-mono">{r.total_tds ?? 0}</TableCell>
+                          </>
                         )}
-                        <TableCell className="text-center font-mono">{r.receptions ?? 0}</TableCell>
-                        {mode === "weekly" ? null : (
-                          <TableCell className="text-center font-mono">{formatStat(r.rpg ?? 0)}</TableCell>
-                        )}
-                        <TableCell className="text-center font-mono">{r.rec_yards ?? 0}</TableCell>
-                        {mode === "weekly" ? null : (
-                          <TableCell className="text-center font-mono">{formatStat(r.rec_ypg ?? 0)}</TableCell>
-                        )}
-                        <TableCell className="text-center font-mono">{r.rush_tds ?? 0}</TableCell>
-                      </>
-                    ) : category === "passing" ? (
-                      <>
-                        <TableCell className="text-center font-mono">{r.passing_completions ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono">{r.passing_attempts ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono font-semibold">{r.passing_yards ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono">{r.passing_tds ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono">{r.interceptions ?? 0}</TableCell>
-                      </>
-                    ) : (
-                      <>
-                        <TableCell className="text-center font-mono">{r.rush_yards ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono">{r.rec_yards ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono font-semibold">{r.total_yards ?? 0}</TableCell>
-                        <TableCell className="text-center font-mono">{r.total_tds ?? 0}</TableCell>
-                      </>
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              )}
             </Table>
           </div>
         </div>
